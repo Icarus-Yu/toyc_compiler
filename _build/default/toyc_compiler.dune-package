@@ -1,0 +1,4 @@
+(lang dune 3.17)
+(name toyc_compiler)
+(sections (lib .) (bin ../../bin))
+(files (lib (META dune-package opam)) (bin (toyc_compiler)))
