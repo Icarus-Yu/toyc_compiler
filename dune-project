@@ -1,4 +1,5 @@
 (lang dune 3.17)
+(using menhir 3.0)
 
 (name toyc_compiler)
 
@@ -19,7 +20,7 @@
  (name toyc_compiler)
  (synopsis "A short synopsis")
  (description "A longer description")
- (depends ocaml)
+ (depends ocaml dune menhir)
  (tags
   ("add topics" "to describe" your project)))
 
