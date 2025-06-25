@@ -15,7 +15,14 @@ ToyC_Compiler/
 │   └── main.ml
 ├── test/
 │  
-├── 
+├── lib/
+│   |——ast.ml
+│   │——ast,mli
+│   │——dune
+│   │——Lexer.mll
+│   │——Lexer.mly
+│   │——toyc_complier.ml
+│ 
 ├── .gitignore
 ├── .gitattributes
 ├── toyc_compiler.opam

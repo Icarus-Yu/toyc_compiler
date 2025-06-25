@@ -1,2 +1,6 @@
 (library
- (name toyc_compiler))
+ (name toyc_compiler)
+ ; Menhir 会自动处理 parser.mly 和 lexer.mll
+ ; 并生成 parser.ml, parser.mli, lexer.ml
+ (menhir
+  (modules parser)))
