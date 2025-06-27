@@ -1,14 +1,10 @@
 ; lib/dune
 
-; 1. ¶¨Òå menhir ½âÎöÆ÷¡£ÕâÊÇÒ»¸ö¶ÀÁ¢µÄ¡¢¶¥¼¶µÄÅäÖÃ¿é¡£
-; Dune »áÓÃËüÀ´´¦Àí parser.mly ºÍ lexer.mll ÎÄ¼ş¡£
+; 1. è§£æ parser.mly ç”Ÿæˆ parser.ml
 (menhir
  (modules parser))
 
-; 2. ¶¨Òå¿â¡£ÕâÒ²ÊÇÒ»¸ö¶ÀÁ¢µÄ¡¢¶¥¼¶µÄÅäÖÃ¿é¡£
-; Dune »á×Ô¶¯°Ñµ±Ç°Ä¿Â¼ÏÂµÄËùÓĞÄ£¿é (°üÀ¨ÉÏÃæ menhir Éú³ÉµÄ parser)
-; ¶¼´ò°üµ½ÃûÎª toyc_compiler µÄ¿âÖĞ¡£
+; 2. å®šä¹‰ toyc_compiler åº“ï¼Œè‡ªåŠ¨åŒ…å«æœ¬ç›®å½•ä¸‹æ‰€æœ‰ .ml/.mli æ–‡ä»¶ï¼ˆåŒ…æ‹¬ astã€symbolã€semanticã€parserã€lexer ç­‰ï¼‰
 (library
  (name toyc_compiler)
- ; (public_name toyc_compiler) ; Èç¹ûÄãÏëÈÃbin/main.mlÄÜ·½±ãµØµ÷ÓÃ£¬¿ÉÒÔ¼ÓÉÏÕâĞĞ
 )
