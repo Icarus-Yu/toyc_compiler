@@ -1,35 +1,35 @@
 
-/* 1. OCaml Í·´úÂë: ¶¨Òå token µÄÊý¾ÝÀàÐÍ */
+/* 1. OCaml å¤´ä»£ç : å®šä¹‰ token çš„æ•°æ®ç±»åž‹ */
 %{
   (*
-    ÕâÀï¿ÉÒÔ·ÅÈÎÒâ OCaml ´úÂë¡£
-    Ä¿Ç°Îª¿Õ£¬µ«Î´À´¿ÉÒÔÓÃÀ´·Å¸¨Öúº¯Êý¡£
+    è¿™é‡Œå¯ä»¥æ”¾ä»»æ„ OCaml ä»£ç ã€‚
+    ç›®å‰ä¸ºç©ºï¼Œä½†æœªæ¥å¯ä»¥ç”¨æ¥æ”¾è¾…åŠ©å‡½æ•°ã€‚
   *)
 %}
 
-/* 2. ¶¨Òå Token */
+/* 2. å®šä¹‰ Token */
 
-/* ÎÄ¼þ½áÊø·û */
+/* æ–‡ä»¶ç»“æŸç¬¦ */
 %token EOF
 
-/* ¹Ø¼ü×Ö */
+/* å…³é”®å­— */
 %token IF ELSE WHILE BREAK CONTINUE RETURN
 %token INT VOID
 
-/* ±êÊ¶·ûºÍ×ÖÃæÁ¿ */
+/* æ ‡è¯†ç¬¦å’Œå­—é¢é‡ */
 %token <string> ID
 %token <int> NUMBER
 
-/* ÔËËã·û */
+/* è¿ç®—ç¬¦ */
 %token PLUS MINUS STAR SLASH MOD
 %token EQ NEQ LT LEQ GT GEQ
 %token AND OR NOT
 
-/* À¨ºÅºÍ·Ö¸ô·û */
+/* æ‹¬å·å’Œåˆ†éš”ç¬¦ */
 %token LPAREN RPAREN LBRACE RBRACE
 %token SEMI COMMA ASSIGN
 
-/* 3. ¶¨ÒåÓÅÏÈ¼¶ºÍ½áºÏÐÔ (ÎªÎ´À´µÄÓï·¨·ÖÎö×ö×¼±¸) */
+/* 3. å®šä¹‰ä¼˜å…ˆçº§å’Œç»“åˆæ€§ (ä¸ºæœªæ¥çš„è¯­æ³•åˆ†æžåšå‡†å¤‡) */
 %right ASSIGN
 %left OR
 %left AND
@@ -39,9 +39,9 @@
 %left STAR SLASH MOD
 %right NOT
 
-/* 4. ¶¨Òå¿ªÊ¼·ûºÅ (Î´À´Óï·¨·ÖÎöµÄÈë¿Ú) */
+/* 4. ï¿½ï¿½ï¿½å¿ªÊ¼ï¿½ï¿½ï¿½ï¿½ (Î´ï¿½ï¿½ï¿½ï·¨ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½) */
 %start <Ast.comp_unit> comp_unit
 
 %%
 
-/* 5. Óï·¨¹æÔò (ÏÖÔÚ¿ÉÒÔÁô¿Õ£¬ÏÂÒ»²½ÔÙÌî³ä) */
+/* 5. ï¿½ï·¨ï¿½ï¿½ï¿½ï¿½ (ï¿½ï¿½ï¿½Ú¿ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Õ£ï¿½ï¿½ï¿½Ò»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½) */
