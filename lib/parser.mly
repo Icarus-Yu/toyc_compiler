@@ -102,6 +102,17 @@ stmts:
 
 /*
   stmt: ToyC 所有语句类型
+  包含：
+    - block
+    - 空语句
+    - 表达式语句
+    - 变量赋值
+    - 变量声明
+    - if/else
+    - while
+    - break/continue
+    - return ;
+    - return Expr ;
 */
 stmt:
   block                { $1 }

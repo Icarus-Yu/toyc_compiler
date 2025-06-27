@@ -4,5 +4,6 @@
 *)
 
 exception Semantic_error of string
+exception NotAllPathsReturn of string
 
 val analyze_program : Ast.comp_unit -> unit 

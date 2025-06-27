@@ -10,6 +10,7 @@ open Ast
 open Symbol
 
 exception Semantic_error of string
+exception NotAllPathsReturn of string
 
 (* 语义分析上下文：记录当前函数、循环深度等信息 *)
 type context = {
@@ -29,22 +30,20 @@ let check_main_function (prog : comp_unit) =
   if not found then
     raise (Semantic_error "必须有一个名为 main、无参数且返回 int 的主函数")
 
-(* 检查变量/函数是否已声明，未声明则报错 *)
-(*
+(* 辅助函数：检查变量/函数是否已声明，未声明则抛出异常 *)
 let require_declared name symtab =
   match Symbol.find_symbol name symtab with
-  | None -> raise (Semantic_error ("未声明的标识符：" ^ name))
+  | None -> raise (Semantic_error ("未声明的函数：" ^ name))
   | Some info -> info
 
-(* 检查变量是否可见且类型匹配 *)
+(* 辅助函数：检查变量赋值时类型是否匹配 *)
 let check_var_assign name expr_typ symtab =
   match Symbol.find_symbol name symtab with
   | Some (Var { typ; _ }) ->
       if typ <> expr_typ then
         raise (Semantic_error ("赋值类型不匹配：" ^ name))
-  | Some _ -> raise (Semantic_error ("不能给函数名赋值：" ^ name))
+  | Some (Func _) -> raise (Semantic_error ("不能给函数名赋值：" ^ name))
   | None -> raise (Semantic_error ("未声明的变量：" ^ name))
-*)
 
 (* 检查 break/continue 是否在循环内 *)
 let check_in_loop ctx keyword =
@@ -67,10 +66,9 @@ let rec infer_expr (symtab : Symbol.t) (ctx : context) (expr : Ast.expr) : Ast.r
   match expr with
   | Int _ -> Int
   | Var name ->
-      (match Symbol.find_symbol name symtab with
-      | Some (Var { typ; _ }) -> typ
-      | Some (Func _) -> raise (Semantic_error ("不能将函数名作为变量使用：" ^ name))
-      | None -> raise (Semantic_error ("未声明的变量：" ^ name)))
+      (match require_declared name symtab with
+      | Var { typ; _ } -> typ
+      | Func _ -> raise (Semantic_error ("不能将函数名作为变量使用：" ^ name)))
   | UnaryOp (op, e) ->
       let t = infer_expr symtab ctx e in
       (match op with
@@ -90,16 +88,15 @@ let rec infer_expr (symtab : Symbol.t) (ctx : context) (expr : Ast.expr) : Ast.r
             (match e2 with Int 0 -> raise (Semantic_error "除数不能为零") | _ -> ());
           Int)
   | Call (fname, args) ->
-      (match Symbol.find_symbol fname symtab with
-      | Some (Func { ret_type; params; _ }) ->
+      (match require_declared fname symtab with
+      | Func { ret_type; params; _ } ->
           let param_types = List.map fst params in
           let arg_types = List.map (infer_expr symtab ctx) args in
           if List.length param_types <> List.length arg_types then
             raise (Semantic_error ("函数参数数量不匹配：" ^ fname));
-          List.iter2 (fun pt at -> if pt <> at then raise (Semantic_error ("函数参数类型不匹配：" ^ fname))) param_types arg_types;
+          ignore (List.map2 (fun pt at -> if pt <> at then raise (Semantic_error ("函数参数类型不匹配：" ^ fname))) param_types arg_types);
           ret_type
-      | Some (Var _) -> raise (Semantic_error ("不能将变量作为函数调用：" ^ fname))
-      | None -> raise (Semantic_error ("未声明的函数：" ^ fname)))
+      | Var _ -> raise (Semantic_error ("不能将变量作为函数调用：" ^ fname)))
 
 (* 将参数列表转换为 (return_type * string) 列表 *)
 let params_to_typ_name_list params =
@@ -108,50 +105,51 @@ let params_to_typ_name_list params =
 (* 语句检查，返回是否所有路径都有 return（用于 int 函数） *)
 let rec check_stmt symtab ctx stmt =
   match stmt with
-  | Empty -> false
-  | Expr e -> ignore (infer_expr symtab ctx e); false
+  | Empty -> (symtab, false)
+  | Expr e -> ignore (infer_expr symtab ctx e); (symtab, false)
   | Block stmts ->
       let symtab' = Symbol.enter_scope symtab in
       let rec aux sytb ctx has_ret = function
-        | [] -> has_ret
+        | [] -> (sytb, has_ret)
         | s :: rest ->
-            let ret = check_stmt sytb ctx s in
-            aux sytb ctx (has_ret || ret) rest
+            let (sytb', ret) = check_stmt sytb ctx s in
+            (* 如果 check_stmt 抛出异常（如不能给函数名赋值），会直接中断 aux，不会被 return 覆盖 *)
+            aux sytb' ctx (has_ret || ret) rest
       in
-      aux symtab' ctx false stmts
+      let (symtab_out, has_return) = aux symtab' ctx false stmts in
+      (Symbol.exit_scope symtab_out, has_return)
   | Return e_opt ->
       let typ_opt = Option.map (infer_expr symtab ctx) e_opt in
-      check_return_type ctx typ_opt; true
+      check_return_type ctx typ_opt; (symtab, true)
   | If (cond, s1, Some s2) ->
       let t = infer_expr symtab ctx cond in
       if t <> Int then raise (Semantic_error "if 条件类型必须为 int");
-      let r1 = check_stmt symtab ctx s1 in
-      let r2 = check_stmt symtab ctx s2 in
-      r1 && r2
+      let (_, r1) = check_stmt symtab ctx s1 in
+      let (_, r2) = check_stmt symtab ctx s2 in
+      (symtab, r1 && r2)
   | If (cond, s1, None) ->
       let t = infer_expr symtab ctx cond in
       if t <> Int then raise (Semantic_error "if 条件类型必须为 int");
-      ignore (check_stmt symtab ctx s1); false
+      ignore (check_stmt symtab ctx s1); (symtab, false)
   | While (cond, body) ->
       let t = infer_expr symtab ctx cond in
       if t <> Int then raise (Semantic_error "while 条件类型必须为 int");
-      ignore (check_stmt symtab { ctx with in_loop = ctx.in_loop + 1 } body); false
-  | Break -> check_in_loop ctx "break"; false
-  | Continue -> check_in_loop ctx "continue"; false
+      let always_true = match cond with Int 1 -> true | _ -> false in
+      let (_, body_ret) = check_stmt symtab { ctx with in_loop = ctx.in_loop + 1 } body in
+      if always_true && body_ret then (symtab, true)
+      else (symtab, false)
+  | Break -> check_in_loop ctx "break"; (symtab, false)
+  | Continue -> check_in_loop ctx "continue"; (symtab, false)
   | Declare (name, e) ->
       let typ = infer_expr symtab ctx e in
       if Symbol.is_declared_in_current_scope name symtab then
         raise (Semantic_error ("变量重复声明：" ^ name));
-      ignore (Symbol.add_symbol name (Var { typ; declared = true; offset = 0 }) symtab); false
+      let symtab' = Symbol.add_symbol name (Var { typ; declared = true; offset = 0 }) symtab in
+      (symtab', false)
   | Assign (name, e) ->
       let typ = infer_expr symtab ctx e in
-      (match Symbol.find_symbol name symtab with
-       | Some (Var { typ = t_decl; _ }) ->
-         if t_decl <> typ then
-           raise (Semantic_error ("赋值类型不匹配：" ^ name))
-       | Some (Func _) -> raise (Semantic_error ("不能给函数名赋值：" ^ name))
-       | None -> raise (Semantic_error ("未声明的变量：" ^ name)));
-      false
+      check_var_assign name typ symtab;
+      (symtab, false)
 
 (* 函数定义检查 *)
 let check_func symtab fdef =
@@ -167,10 +165,10 @@ let check_func symtab fdef =
     ) symtab' fdef.params
   in
   let ctx = { current_func = Some (fdef.name, fdef.ret_type); in_loop = 0 } in
-  let has_return = check_stmt symtab'' ctx fdef.body in
+  let (_, has_return) = check_stmt symtab'' ctx fdef.body in
   (* int 函数所有路径必须 return *)
   if fdef.ret_type = Int && not has_return then
-    raise (Semantic_error ("int 类型函数 " ^ fdef.name ^ " 不是所有路径都返回值"))
+    raise (NotAllPathsReturn ("int 类型函数 " ^ fdef.name ^ " 不是所有路径都返回值"))
 
 (* 程序主入口 *)
 let analyze_program (prog : comp_unit) =
