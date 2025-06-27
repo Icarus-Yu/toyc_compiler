@@ -1,0 +1,10 @@
+; lib/dune
+
+; 1. 解析 parser.mly 生成 parser.ml
+(menhir
+ (modules parser))
+
+; 2. 定义 toyc_compiler 库，自动包含本目录下所有 .ml/.mli 文件（包括 ast、symbol、semantic、parser、lexer 等）
+(library
+ (name toyc_compiler)
+)
