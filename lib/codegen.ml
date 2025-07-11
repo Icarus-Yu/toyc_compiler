@@ -194,11 +194,24 @@ let rec gen_stmt ctx (stmt : Ast.stmt) =
   | Ast.Return (Some e) ->
     let e_reg, e_instrs = gen_expr ctx e in
     e_instrs
-    @ [ Riscv.Mv (Riscv.A0, e_reg)
-      ; (* 将返回值放入 A0 *)
-        Riscv.Jalr (Riscv.Zero, Riscv.Ra, 0) (* 返回 *)
+    @ [ Riscv.Mv (Riscv.A0, e_reg) (* 将返回值放入 A0 *) ]
+    @ [ (* 函数尾声：恢复栈帧 *)
+        Riscv.Mv (Riscv.Sp, Riscv.S0) (* 恢复栈指针 *)
+      ; Riscv.Lw (Riscv.S0, 0, Riscv.Sp) (* 恢复旧的帧指针 *)
+      ; Riscv.Addi (Riscv.Sp, Riscv.Sp, 4) (* 释放帧指针栈空间 *)
+      ; Riscv.Lw (Riscv.Ra, 0, Riscv.Sp) (* 恢复返回地址 *)
+      ; Riscv.Addi (Riscv.Sp, Riscv.Sp, 4) (* 释放返回地址栈空间 *)
+      ; Riscv.Jalr (Riscv.Zero, Riscv.Ra, 0) (* 返回 *)
       ]
-  | Ast.Return None -> [ Riscv.Jalr (Riscv.Zero, Riscv.Ra, 0) ]
+  | Ast.Return None ->
+    [ (* 函数尾声：恢复栈帧 *)
+      Riscv.Mv (Riscv.Sp, Riscv.S0) (* 恢复栈指针 *)
+    ; Riscv.Lw (Riscv.S0, 0, Riscv.Sp) (* 恢复旧的帧指针 *)
+    ; Riscv.Addi (Riscv.Sp, Riscv.Sp, 4) (* 释放帧指针栈空间 *)
+    ; Riscv.Lw (Riscv.Ra, 0, Riscv.Sp) (* 恢复返回地址 *)
+    ; Riscv.Addi (Riscv.Sp, Riscv.Sp, 4) (* 释放返回地址栈空间 *)
+    ; Riscv.Jalr (Riscv.Zero, Riscv.Ra, 0) (* 返回 *)
+    ]
   | Ast.If (cond, then_stmt, else_stmt) ->
     let cond_reg, cond_instrs = gen_expr ctx cond in
     let else_label = new_label ctx "else" in
@@ -305,6 +318,29 @@ let gen_function symbol_table (func_def : Ast.func_def) =
   prologue @ param_instrs @ body_instrs @ epilogue
 ;;
 
+(* 插入缺失的标签 *)
+let insert_missing_labels instrs =
+  let rec find_labels acc = function
+    | [] -> acc
+    | instr :: rest ->
+      let new_labels =
+        match instr with
+        | Riscv.Beq (_, _, label) -> [ label ]
+        | Riscv.Bne (_, _, label) -> [ label ]
+        | Riscv.Blt (_, _, label) -> [ label ]
+        | Riscv.Bge (_, _, label) -> [ label ]
+        | Riscv.J label -> [ label ]
+        | _ -> []
+      in
+      find_labels (new_labels @ acc) rest
+  in
+  let labels = find_labels [] instrs |> List.sort_uniq String.compare in
+  let label_asm_items = List.map (fun label -> Riscv.Label label) labels in
+  let instr_asm_items = List.map (fun i -> Riscv.Instruction i) instrs in
+  (* 简单地在指令前插入所有标签 *)
+  label_asm_items @ instr_asm_items
+;;
+
 (* 生成程序代码 *)
 let gen_program symbol_table (program : Ast.comp_unit) =
   (* 全局声明 *)
@@ -319,8 +355,9 @@ let gen_program symbol_table (program : Ast.comp_unit) =
     List.map
       (fun func_def ->
          let instrs = gen_function symbol_table func_def in
+         let asm_items_with_labels = insert_missing_labels instrs in
          [ Riscv.Label func_def.name; Riscv.Comment ("Function: " ^ func_def.name) ]
-         @ List.map (fun i -> Riscv.Instruction i) instrs)
+         @ asm_items_with_labels)
       program
     |> List.flatten
   in
