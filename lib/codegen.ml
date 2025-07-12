@@ -141,10 +141,11 @@ let rec gen_expr ctx (expr : Ast.expr) : reg * instruction list =
 
 (* Generate epilogue *)
 let gen_epilogue_instrs frame_size =
-  [ (* First restore registers from stack before releasing stack frame *)
-    Lw (Ra, frame_size - 4, Sp) (* Restore return address *)
-  ; Lw (Fp, frame_size - 8, Sp) (* Restore old frame pointer *)
+  [ (* Restore registers using frame pointer before releasing stack frame *)
+    Lw (Ra, -4, Fp) (* Restore return address *)
+  ; Lw (T0, -8, Fp) (* Load old frame pointer into temp register *)
   ; Addi (Sp, Sp, frame_size) (* Release stack frame *)
+  ; Mv (Fp, T0) (* Restore old frame pointer *)
   ; Ret (* Return to caller *)
   ]
 ;;
@@ -258,8 +259,9 @@ let gen_function symbol_table (func_def : Ast.func_def) : asm_item list =
     ]
   in
   (* 处理参数 *)
-  ctx.stack_offset <- 0;
-  (* Start allocating locals below fp *)
+  ctx.stack_offset <- -8;
+  (* Start after saved ra (-4) and fp (-8) *)
+  (* Start allocating locals below saved registers *)
   let param_instrs =
     List.mapi
       (fun i param ->
