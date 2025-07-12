@@ -67,7 +67,19 @@ funcdefs:
 */
 funcdef:
   rettype id=ID LPAREN params_opt RPAREN body=block
-    { { ret_type = $1; name = id; params = $4; body = body } }
+    {
+      let rec collect_locals stmt =
+        match stmt with
+        | Declare (id, e) -> [(id, e)]
+        | Block stmts -> List.concat_map collect_locals stmts
+        | If (_, s1, Some s2) -> collect_locals s1 @ collect_locals s2
+        | If (_, s1, None) -> collect_locals s1
+        | While (_, s) -> collect_locals s
+        | _ -> []
+      in
+      let locals = collect_locals body in
+      { ret_type = $1; name = id; params = $4; body = body; locals = locals }
+    }
 ;
 
 rettype:
@@ -191,5 +203,4 @@ args_opt:
 args:
   expr                { [$1] }
 | args COMMA expr     { $1 @ [$3] }
-;
 

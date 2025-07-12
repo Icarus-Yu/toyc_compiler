@@ -13,7 +13,7 @@ type reg =
   | T0 (* x5: 临时寄存器 *)
   | T1 (* x6: 临时寄存器 *)
   | T2 (* x7: 临时寄存器 *)
-  | S0 (* x8: 保存寄存器/帧指针 *)
+  | Fp (* x8: 帧指针 *)
   | S1 (* x9: 保存寄存器 *)
   | A0 (* x10: 函数参数/返回值 *)
   | A1 (* x11: 函数参数 *)
@@ -55,6 +55,8 @@ type instruction =
   (* 比较指令 *)
   | Slt of reg * reg * reg (* slt rd, rs1, rs2 *)
   | Slti of reg * reg * int (* slti rd, rs1, imm *)
+  | Sltu of reg * reg * reg (* sltu rd, rs1, rs2 *)
+  | Sltiu of reg * reg * int (* sltiu rd, rs1, imm *)
   (* 加载/存储指令 *)
   | Lw of reg * int * reg (* lw rd, offset(rs1) *)
   | Sw of reg * int * reg (* sw rs2, offset(rs1) *)
@@ -69,6 +71,7 @@ type instruction =
   | J of string (* j label *)
   | Jal of reg * string (* jal rd, label *)
   | Jalr of reg * reg * int (* jalr rd, rs1, offset *)
+  | Ret (* ret - 伪指令 *)
   (* 立即数加载 *)
   | Li of reg * int (* li rd, imm - 伪指令 *)
   | Lui of reg * int (* lui rd, imm *)
@@ -89,38 +92,38 @@ type asm_item =
 
 (* 将寄存器转换为字符串 *)
 let reg_to_string = function
-  | Zero -> "x0"
-  | Ra -> "x1"
-  | Sp -> "x2"
-  | Gp -> "x3"
-  | Tp -> "x4"
-  | T0 -> "x5"
-  | T1 -> "x6"
-  | T2 -> "x7"
-  | S0 -> "x8"
-  | S1 -> "x9"
-  | A0 -> "x10"
-  | A1 -> "x11"
-  | A2 -> "x12"
-  | A3 -> "x13"
-  | A4 -> "x14"
-  | A5 -> "x15"
-  | A6 -> "x16"
-  | A7 -> "x17"
-  | S2 -> "x18"
-  | S3 -> "x19"
-  | S4 -> "x20"
-  | S5 -> "x21"
-  | S6 -> "x22"
-  | S7 -> "x23"
-  | S8 -> "x24"
-  | S9 -> "x25"
-  | S10 -> "x26"
-  | S11 -> "x27"
-  | T3 -> "x28"
-  | T4 -> "x29"
-  | T5 -> "x30"
-  | T6 -> "x31"
+  | Zero -> "zero"
+  | Ra -> "ra"
+  | Sp -> "sp"
+  | Gp -> "gp"
+  | Tp -> "tp"
+  | T0 -> "t0"
+  | T1 -> "t1"
+  | T2 -> "t2"
+  | Fp -> "fp"
+  | S1 -> "s1"
+  | A0 -> "a0"
+  | A1 -> "a1"
+  | A2 -> "a2"
+  | A3 -> "a3"
+  | A4 -> "a4"
+  | A5 -> "a5"
+  | A6 -> "a6"
+  | A7 -> "a7"
+  | S2 -> "s2"
+  | S3 -> "s3"
+  | S4 -> "s4"
+  | S5 -> "s5"
+  | S6 -> "s6"
+  | S7 -> "s7"
+  | S8 -> "s8"
+  | S9 -> "s9"
+  | S10 -> "s10"
+  | S11 -> "s11"
+  | T3 -> "t3"
+  | T4 -> "t4"
+  | T5 -> "t5"
+  | T6 -> "t6"
 ;;
 
 (* 将指令转换为汇编字符串 *)
@@ -185,6 +188,14 @@ let instruction_to_string = function
       (reg_to_string rs2)
   | Slti (rd, rs1, imm) ->
     Printf.sprintf "slti %s, %s, %d" (reg_to_string rd) (reg_to_string rs1) imm
+  | Sltu (rd, rs1, rs2) ->
+    Printf.sprintf
+      "sltu %s, %s, %s"
+      (reg_to_string rd)
+      (reg_to_string rs1)
+      (reg_to_string rs2)
+  | Sltiu (rd, rs1, imm) ->
+    Printf.sprintf "sltiu %s, %s, %d" (reg_to_string rd) (reg_to_string rs1) imm
   | Lw (rd, offset, rs1) ->
     Printf.sprintf "lw %s, %d(%s)" (reg_to_string rd) offset (reg_to_string rs1)
   | Sw (rs2, offset, rs1) ->
@@ -205,6 +216,7 @@ let instruction_to_string = function
   | Jal (rd, label) -> Printf.sprintf "jal %s, %s" (reg_to_string rd) label
   | Jalr (rd, rs1, offset) ->
     Printf.sprintf "jalr %s, %s, %d" (reg_to_string rd) (reg_to_string rs1) offset
+  | Ret -> "ret"
   | Li (rd, imm) -> Printf.sprintf "li %s, %d" (reg_to_string rd) imm
   | Lui (rd, imm) -> Printf.sprintf "lui %s, %d" (reg_to_string rd) imm
   | Mv (rd, rs) -> Printf.sprintf "mv %s, %s" (reg_to_string rd) (reg_to_string rs)

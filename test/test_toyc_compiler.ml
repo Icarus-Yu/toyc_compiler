@@ -1,7 +1,8 @@
 open OUnit2
 
-let make_func ?(params = []) ?(ret_type = Toyc_compiler__Ast.Int) name body =
-  { Toyc_compiler__Ast.ret_type; name; params; body }
+let make_func ?(params = []) ?(locals = []) ?(ret_type = Toyc_compiler__Ast.Int) name body
+  =
+  { Toyc_compiler__Ast.ret_type; name; params; locals; body }
 ;;
 
 let make_var_decl name value =

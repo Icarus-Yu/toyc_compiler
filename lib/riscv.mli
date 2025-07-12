@@ -12,7 +12,7 @@ type reg =
   | T0
   | T1
   | T2
-  | S0
+  | Fp (* s0/x8 is used as Frame Pointer *)
   | S1
   | A0
   | A1
@@ -54,6 +54,8 @@ type instruction =
   (* 比较指令 *)
   | Slt of reg * reg * reg
   | Slti of reg * reg * int
+  | Sltu of reg * reg * reg
+  | Sltiu of reg * reg * int
   (* 加载/存储指令 *)
   | Lw of reg * int * reg
   | Sw of reg * int * reg
@@ -68,6 +70,7 @@ type instruction =
   | J of string
   | Jal of reg * string
   | Jalr of reg * reg * int
+  | Ret
   (* 立即数加载 *)
   | Li of reg * int
   | Lui of reg * int

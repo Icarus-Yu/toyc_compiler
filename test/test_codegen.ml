@@ -5,6 +5,7 @@ let test_main_function =
     { ret_type = Int
     ; name = "main"
     ; params = []
+    ; locals = [] (* Add this line *)
     ; body =
         Block
           [ Declare ("x", Int 5)

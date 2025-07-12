@@ -4,6 +4,7 @@
 *)
 
 open Ast
+open Riscv
 
 (* 代码生成上下文 *)
 type codegen_context =
@@ -19,7 +20,7 @@ type codegen_context =
 let create_context _symbol_table =
   { label_counter = 0
   ; temp_counter = 0
-  ; stack_offset = 0
+  ; stack_offset = 0 (* fp-based offset, starts from 0 and goes down *)
   ; break_labels = []
   ; continue_labels = []
   ; local_vars = []
@@ -36,15 +37,16 @@ let new_label ctx prefix =
 (* 获取临时寄存器 *)
 let get_temp_reg ctx =
   let reg =
-    match ctx.temp_counter mod 8 with
-    | 0 -> Riscv.T0
-    | 1 -> Riscv.T1
-    | 2 -> Riscv.T2
-    | 3 -> Riscv.T3
-    | 4 -> Riscv.T4
-    | 5 -> Riscv.T5
-    | 6 -> Riscv.T6
-    | _ -> Riscv.A0
+    match ctx.temp_counter mod 7 with
+    (* T0-T6 *)
+    | 0 -> T0
+    | 1 -> T1
+    | 2 -> T2
+    | 3 -> T3
+    | 4 -> T4
+    | 5 -> T5
+    | 6 -> T6
+    | _ -> failwith "Should not happen"
   in
   ctx.temp_counter <- ctx.temp_counter + 1;
   reg
@@ -64,26 +66,24 @@ let get_var_offset ctx name =
 ;;
 
 (* 生成表达式代码，返回结果寄存器和指令列表 *)
-let rec gen_expr ctx (expr : Ast.expr) =
+let rec gen_expr ctx (expr : Ast.expr) : reg * instruction list =
   match expr with
   | Ast.Int n ->
     let reg = get_temp_reg ctx in
-    let instr = if n = 0 then [ Riscv.Mv (reg, Riscv.Zero) ] else [ Riscv.Li (reg, n) ] in
+    let instr = [ Li (reg, n) ] in
     reg, instr
   | Ast.Var name ->
     let reg = get_temp_reg ctx in
     let offset = get_var_offset ctx name in
-    let instr = [ Riscv.Lw (reg, offset, Riscv.S0) ] in
+    let instr = [ Lw (reg, offset, Fp) ] in
     reg, instr
   | Ast.UnaryOp (op, e) ->
     let e_reg, e_instrs = gen_expr ctx e in
     let result_reg = get_temp_reg ctx in
     let instrs =
       match op with
-      | Ast.Neg -> e_instrs @ [ Riscv.Sub (result_reg, Riscv.Zero, e_reg) ]
-      | Ast.Not ->
-        e_instrs
-        @ [ Riscv.Slti (result_reg, e_reg, 1) (* 如果 e_reg < 1，则 result_reg = 1，否则为 0 *) ]
+      | Ast.Neg -> e_instrs @ [ Sub (result_reg, Zero, e_reg) ]
+      | Ast.Not -> e_instrs @ [ Sltiu (result_reg, e_reg, 1) ]
     in
     result_reg, instrs
   | Ast.BinaryOp (op, e1, e2) ->
@@ -92,190 +92,174 @@ let rec gen_expr ctx (expr : Ast.expr) =
     let result_reg = get_temp_reg ctx in
     let op_instrs =
       match op with
-      | Ast.Add -> [ Riscv.Add (result_reg, e1_reg, e2_reg) ]
-      | Ast.Sub -> [ Riscv.Sub (result_reg, e1_reg, e2_reg) ]
-      | Ast.Mul -> [ Riscv.Mul (result_reg, e1_reg, e2_reg) ]
-      | Ast.Div -> [ Riscv.Div (result_reg, e1_reg, e2_reg) ]
-      | Ast.Mod -> [ Riscv.Rem (result_reg, e1_reg, e2_reg) ]
-      | Ast.Eq ->
-        [ Riscv.Sub (result_reg, e1_reg, e2_reg)
-        ; Riscv.Slti (result_reg, result_reg, 1) (* 如果差值 < 1 且 >= 0，则相等 *)
-        ]
+      | Ast.Add -> [ Add (result_reg, e1_reg, e2_reg) ]
+      | Ast.Sub -> [ Sub (result_reg, e1_reg, e2_reg) ]
+      | Ast.Mul -> [ Mul (result_reg, e1_reg, e2_reg) ]
+      | Ast.Div -> [ Div (result_reg, e1_reg, e2_reg) ]
+      | Ast.Mod -> [ Rem (result_reg, e1_reg, e2_reg) ]
+      | Ast.Eq -> [ Sub (result_reg, e1_reg, e2_reg); Sltiu (result_reg, result_reg, 1) ]
       | Ast.Neq ->
-        [ Riscv.Sub (result_reg, e1_reg, e2_reg)
-        ; Riscv.Slti (Riscv.T0, result_reg, 1)
-        ; (* T0 = (diff < 1) *)
-          Riscv.Xori (result_reg, Riscv.T0, 1) (* result = !T0 *)
-        ]
-      | Ast.Lt -> [ Riscv.Slt (result_reg, e1_reg, e2_reg) ]
-      | Ast.Leq ->
-        [ Riscv.Slt (result_reg, e2_reg, e1_reg)
-        ; (* result = (e2 < e1) *)
-          Riscv.Xori (result_reg, result_reg, 1) (* result = !(e2 < e1) = (e1 <= e2) *)
-        ]
-      | Ast.Gt -> [ Riscv.Slt (result_reg, e2_reg, e1_reg) ]
-      | Ast.Geq ->
-        [ Riscv.Slt (result_reg, e1_reg, e2_reg)
-        ; (* result = (e1 < e2) *)
-          Riscv.Xori (result_reg, result_reg, 1) (* result = !(e1 < e2) = (e1 >= e2) *)
-        ]
+        [ Sub (result_reg, e1_reg, e2_reg); Sltu (result_reg, Zero, result_reg) ]
+      | Ast.Lt -> [ Slt (result_reg, e1_reg, e2_reg) ]
+      | Ast.Leq -> [ Slt (result_reg, e2_reg, e1_reg); Xori (result_reg, result_reg, 1) ]
+      | Ast.Gt -> [ Slt (result_reg, e2_reg, e1_reg) ]
+      | Ast.Geq -> [ Slt (result_reg, e1_reg, e2_reg); Xori (result_reg, result_reg, 1) ]
       | Ast.And ->
-        let false_label = new_label ctx "and_false" in
-        let end_label = new_label ctx "and_end" in
-        e1_instrs
-        @ e2_instrs
-        @ [ Riscv.Beq (e1_reg, Riscv.Zero, false_label)
-          ; (* 如果 e1 == 0，跳转到 false *)
-            Riscv.Beq (e2_reg, Riscv.Zero, false_label)
-          ; (* 如果 e2 == 0，跳转到 false *)
-            Riscv.Li (result_reg, 1)
-          ; (* 否则结果为 true *)
-            Riscv.J end_label
-          ; Riscv.Li (result_reg, 0) (* 结果为 false *)
-          ]
+        (* This is a shortcut, not a full logical AND with short-circuiting *)
+        [ Sltu (T0, Zero, e1_reg); Sltu (T1, Zero, e2_reg); And (result_reg, T0, T1) ]
       | Ast.Or ->
-        let true_label = new_label ctx "or_true" in
-        let end_label = new_label ctx "or_end" in
-        e1_instrs
-        @ e2_instrs
-        @ [ Riscv.Bne (e1_reg, Riscv.Zero, true_label)
-          ; (* 如果 e1 != 0，跳转到 true *)
-            Riscv.Bne (e2_reg, Riscv.Zero, true_label)
-          ; (* 如果 e2 != 0，跳转到 true *)
-            Riscv.Li (result_reg, 0)
-          ; (* 否则结果为 false *)
-            Riscv.J end_label
-          ; Riscv.Li (result_reg, 1) (* 结果为 true *)
-          ]
+        (* This is a shortcut, not a full logical OR with short-circuiting *)
+        [ Or (result_reg, e1_reg, e2_reg); Sltu (result_reg, Zero, result_reg) ]
     in
     let instrs = e1_instrs @ e2_instrs @ op_instrs in
     result_reg, instrs
   | Ast.Call (fname, args) ->
-    (* 简化的函数调用实现 *)
-    let result_reg = Riscv.A0 in
+    let result_reg = A0 in
     let arg_instrs =
       List.mapi
         (fun i arg ->
            let arg_reg, arg_code = gen_expr ctx arg in
            let target_reg =
              match i with
-             | 0 -> Riscv.A0
-             | 1 -> Riscv.A1
-             | 2 -> Riscv.A2
-             | 3 -> Riscv.A3
-             | 4 -> Riscv.A4
-             | 5 -> Riscv.A5
-             | 6 -> Riscv.A6
-             | 7 -> Riscv.A7
+             | 0 -> A0
+             | 1 -> A1
+             | 2 -> A2
+             | 3 -> A3
+             | 4 -> A4
+             | 5 -> A5
+             | 6 -> A6
+             | 7 -> A7
              | _ -> failwith "Too many arguments"
            in
-           arg_code @ [ Riscv.Mv (target_reg, arg_reg) ])
+           arg_code @ [ Mv (target_reg, arg_reg) ])
         args
       |> List.flatten
     in
-    let call_instr = [ Riscv.Jal (Riscv.Ra, fname) ] in
+    let call_instr = [ Jal (Ra, fname) ] in
     result_reg, arg_instrs @ call_instr
 ;;
 
+(* Generate epilogue *)
+let gen_epilogue_instrs frame_size =
+  [ (* First restore registers from stack before releasing stack frame *)
+    Lw (Ra, frame_size - 4, Sp) (* Restore return address *)
+  ; Lw (Fp, frame_size - 8, Sp) (* Restore old frame pointer *)
+  ; Addi (Sp, Sp, frame_size) (* Release stack frame *)
+  ; Ret (* Return to caller *)
+  ]
+;;
+
 (* 生成语句代码 *)
-let rec gen_stmt ctx (stmt : Ast.stmt) =
+let rec gen_stmt ctx frame_size (stmt : Ast.stmt) : asm_item list =
   match stmt with
   | Ast.Empty -> []
   | Ast.Expr e ->
     let _, instrs = gen_expr ctx e in
-    instrs
+    List.map (fun i -> Instruction i) instrs
   | Ast.Block stmts ->
     let old_vars = ctx.local_vars in
     let old_offset = ctx.stack_offset in
-    let instrs = List.map (gen_stmt ctx) stmts |> List.flatten in
+    let items = List.map (gen_stmt ctx frame_size) stmts |> List.flatten in
     ctx.local_vars <- old_vars;
     ctx.stack_offset <- old_offset;
-    instrs
+    items
   | Ast.Return (Some e) ->
-    let e_reg, e_instrs = gen_expr ctx e in
-    e_instrs
-    @ [ Riscv.Mv (Riscv.A0, e_reg) (* 将返回值放入 A0 *) ]
-    @ [ (* 函数尾声：恢复栈帧 *)
-        Riscv.Mv (Riscv.Sp, Riscv.S0) (* 恢复栈指针 *)
-      ; Riscv.Lw (Riscv.S0, 0, Riscv.Sp) (* 恢复旧的帧指针 *)
-      ; Riscv.Addi (Riscv.Sp, Riscv.Sp, 4) (* 释放帧指针栈空间 *)
-      ; Riscv.Lw (Riscv.Ra, 0, Riscv.Sp) (* 恢复返回地址 *)
-      ; Riscv.Addi (Riscv.Sp, Riscv.Sp, 4) (* 释放返回地址栈空间 *)
-      ; Riscv.Jalr (Riscv.Zero, Riscv.Ra, 0) (* 返回 *)
-      ]
-  | Ast.Return None ->
-    [ (* 函数尾声：恢复栈帧 *)
-      Riscv.Mv (Riscv.Sp, Riscv.S0) (* 恢复栈指针 *)
-    ; Riscv.Lw (Riscv.S0, 0, Riscv.Sp) (* 恢复旧的帧指针 *)
-    ; Riscv.Addi (Riscv.Sp, Riscv.Sp, 4) (* 释放帧指针栈空间 *)
-    ; Riscv.Lw (Riscv.Ra, 0, Riscv.Sp) (* 恢复返回地址 *)
-    ; Riscv.Addi (Riscv.Sp, Riscv.Sp, 4) (* 释放返回地址栈空间 *)
-    ; Riscv.Jalr (Riscv.Zero, Riscv.Ra, 0) (* 返回 *)
-    ]
+    (* Optimize for simple constant 0 *)
+    (match e with
+     | Ast.Int 0 ->
+       let all_instrs = [ Li (A0, 0) ] @ gen_epilogue_instrs frame_size in
+       List.map (fun i -> Instruction i) all_instrs
+     | _ ->
+       let e_reg, e_instrs = gen_expr ctx e in
+       let all_instrs = e_instrs @ [ Mv (A0, e_reg) ] @ gen_epilogue_instrs frame_size in
+       List.map (fun i -> Instruction i) all_instrs)
+  | Ast.Return None -> List.map (fun i -> Instruction i) (gen_epilogue_instrs frame_size)
   | Ast.If (cond, then_stmt, else_stmt) ->
     let cond_reg, cond_instrs = gen_expr ctx cond in
     let else_label = new_label ctx "else" in
     let end_label = new_label ctx "endif" in
-    let then_instrs = gen_stmt ctx then_stmt in
-    let else_instrs =
+    let then_items = gen_stmt ctx frame_size then_stmt in
+    let else_items =
       match else_stmt with
-      | Some s -> gen_stmt ctx s
+      | Some s -> gen_stmt ctx frame_size s
       | None -> []
     in
-    cond_instrs
-    @ [ Riscv.Beq (cond_reg, Riscv.Zero, else_label) (* 如果条件为假，跳转到 else *) ]
-    @ then_instrs
-    @ [ Riscv.J end_label ]
-    @ else_instrs
+    List.map (fun i -> Instruction i) cond_instrs
+    @ [ Instruction (Beq (cond_reg, Zero, else_label)) ]
+    @ then_items
+    @ [ Instruction (J end_label); Label else_label ]
+    @ else_items
+    @ [ Label end_label ]
   | Ast.While (cond, body) ->
     let loop_label = new_label ctx "loop" in
     let end_label = new_label ctx "endloop" in
     ctx.break_labels <- end_label :: ctx.break_labels;
     ctx.continue_labels <- loop_label :: ctx.continue_labels;
     let cond_reg, cond_instrs = gen_expr ctx cond in
-    let body_instrs = gen_stmt ctx body in
+    let body_items = gen_stmt ctx frame_size body in
     ctx.break_labels <- List.tl ctx.break_labels;
     ctx.continue_labels <- List.tl ctx.continue_labels;
-    []
-    @ cond_instrs
-    @ [ Riscv.Beq (cond_reg, Riscv.Zero, end_label) (* 如果条件为假，退出循环 *) ]
-    @ body_instrs
-    @ [ Riscv.J loop_label ]
+    [ Label loop_label ]
+    @ List.map (fun i -> Instruction i) cond_instrs
+    @ [ Instruction (Beq (cond_reg, Zero, end_label)) ]
+    @ body_items
+    @ [ Instruction (J loop_label); Label end_label ]
   | Ast.Break ->
     (match ctx.break_labels with
-     | label :: _ -> [ Riscv.J label ]
+     | label :: _ -> [ Instruction (J label) ]
      | [] -> failwith "Break outside loop")
   | Ast.Continue ->
     (match ctx.continue_labels with
-     | label :: _ -> [ Riscv.J label ]
+     | label :: _ -> [ Instruction (J label) ]
      | [] -> failwith "Continue outside loop")
   | Ast.Declare (name, e) ->
     let offset = add_local_var ctx name in
     let e_reg, e_instrs = gen_expr ctx e in
-    e_instrs @ [ Riscv.Sw (e_reg, offset, Riscv.S0) ]
+    let all_instrs = e_instrs @ [ Sw (e_reg, offset, Fp) ] in
+    List.map (fun i -> Instruction i) all_instrs
   | Ast.Assign (name, e) ->
     let offset = get_var_offset ctx name in
     let e_reg, e_instrs = gen_expr ctx e in
-    e_instrs @ [ Riscv.Sw (e_reg, offset, Riscv.S0) ]
+    let all_instrs = e_instrs @ [ Sw (e_reg, offset, Fp) ] in
+    List.map (fun i -> Instruction i) all_instrs
+;;
+
+(* 计算函数所需的栈帧大小 *)
+let calculate_frame_size (func_def : Ast.func_def) =
+  (* Helper to count declarations in a statement *)
+  let rec count_decls_in_stmt stmt =
+    match stmt with
+    | Declare _ -> 1
+    | Block stmts -> List.fold_left (fun acc s -> acc + count_decls_in_stmt s) 0 stmts
+    | If (_, s1, Some s2) -> count_decls_in_stmt s1 + count_decls_in_stmt s2
+    | If (_, s1, None) -> count_decls_in_stmt s1
+    | While (_, s) -> count_decls_in_stmt s
+    | _ -> 0
+  in
+  let num_locals = count_decls_in_stmt func_def.body in
+  let num_params = List.length func_def.params in
+  (* ra, fp + params + locals *)
+  let required_space = 8 + (num_params * 4) + (num_locals * 4) in
+  (* Align to 16 bytes *)
+  (required_space + 15) / 16 * 16
 ;;
 
 (* 生成函数代码 *)
-let gen_function symbol_table (func_def : Ast.func_def) =
+let gen_function symbol_table (func_def : Ast.func_def) : asm_item list =
   let ctx = create_context symbol_table in
+  let frame_size = calculate_frame_size func_def in
   (* 函数序言 *)
   let prologue =
-    [ Riscv.Addi (Riscv.Sp, Riscv.Sp, -4)
-    ; (* 为返回地址分配栈空间 *)
-      Riscv.Sw (Riscv.Ra, 0, Riscv.Sp)
-    ; (* 保存返回地址 *)
-      Riscv.Addi (Riscv.Sp, Riscv.Sp, -4)
-    ; (* 为帧指针分配栈空间 *)
-      Riscv.Sw (Riscv.S0, 0, Riscv.Sp)
-    ; (* 保存旧的帧指针 *)
-      Riscv.Mv (Riscv.S0, Riscv.Sp) (* 设置新的帧指针 *)
+    [ Comment "prologue"
+    ; Instruction (Addi (Sp, Sp, -frame_size))
+    ; Instruction (Sw (Ra, frame_size - 4, Sp))
+    ; Instruction (Sw (Fp, frame_size - 8, Sp))
+    ; Instruction (Addi (Fp, Sp, frame_size))
     ]
   in
   (* 处理参数 *)
+  ctx.stack_offset <- 0;
+  (* Start allocating locals below fp *)
   let param_instrs =
     List.mapi
       (fun i param ->
@@ -284,80 +268,50 @@ let gen_function symbol_table (func_def : Ast.func_def) =
            let offset = add_local_var ctx name in
            let arg_reg =
              match i with
-             | 0 -> Riscv.A0
-             | 1 -> Riscv.A1
-             | 2 -> Riscv.A2
-             | 3 -> Riscv.A3
-             | 4 -> Riscv.A4
-             | 5 -> Riscv.A5
-             | 6 -> Riscv.A6
-             | 7 -> Riscv.A7
+             | 0 -> A0
+             | 1 -> A1
+             | 2 -> A2
+             | 3 -> A3
+             | 4 -> A4
+             | 5 -> A5
+             | 6 -> A6
+             | 7 -> A7
              | _ -> failwith "Too many parameters"
            in
-           [ Riscv.Sw (arg_reg, offset, Riscv.S0) ])
+           [ Instruction (Sw (arg_reg, offset, Fp)) ])
       func_def.params
     |> List.flatten
   in
   (* 函数体 *)
-  let body_instrs = gen_stmt ctx func_def.body in
+  let body_items = gen_stmt ctx frame_size func_def.body in
   (* 函数尾声（如果函数没有显式 return） *)
   let epilogue =
-    [ Riscv.Mv (Riscv.Sp, Riscv.S0)
-    ; (* 恢复栈指针 *)
-      Riscv.Lw (Riscv.S0, 0, Riscv.Sp)
-    ; (* 恢复旧的帧指针 *)
-      Riscv.Addi (Riscv.Sp, Riscv.Sp, 4)
-    ; (* 释放帧指针栈空间 *)
-      Riscv.Lw (Riscv.Ra, 0, Riscv.Sp)
-    ; (* 恢复返回地址 *)
-      Riscv.Addi (Riscv.Sp, Riscv.Sp, 4)
-    ; (* 释放返回地址栈空间 *)
-      Riscv.Jalr (Riscv.Zero, Riscv.Ra, 0) (* 返回 *)
-    ]
+    let has_ret =
+      List.exists
+        (function
+          | Instruction Ret -> true
+          | _ -> false)
+        body_items
+    in
+    if has_ret
+    then []
+    else List.map (fun i -> Instruction i) (gen_epilogue_instrs frame_size)
   in
-  prologue @ param_instrs @ body_instrs @ epilogue
-;;
-
-(* 插入缺失的标签 *)
-let insert_missing_labels instrs =
-  let rec find_labels acc = function
-    | [] -> acc
-    | instr :: rest ->
-      let new_labels =
-        match instr with
-        | Riscv.Beq (_, _, label) -> [ label ]
-        | Riscv.Bne (_, _, label) -> [ label ]
-        | Riscv.Blt (_, _, label) -> [ label ]
-        | Riscv.Bge (_, _, label) -> [ label ]
-        | Riscv.J label -> [ label ]
-        | _ -> []
-      in
-      find_labels (new_labels @ acc) rest
-  in
-  let labels = find_labels [] instrs |> List.sort_uniq String.compare in
-  let label_asm_items = List.map (fun label -> Riscv.Label label) labels in
-  let instr_asm_items = List.map (fun i -> Riscv.Instruction i) instrs in
-  (* 简单地在指令前插入所有标签 *)
-  label_asm_items @ instr_asm_items
+  prologue @ param_instrs @ body_items @ epilogue
 ;;
 
 (* 生成程序代码 *)
 let gen_program symbol_table (program : Ast.comp_unit) =
   (* 全局声明 *)
   let header =
-    [ Riscv.Directive ".text"
-    ; Riscv.Directive ".globl main"
-    ; Riscv.Comment "ToyC Compiler Generated Code"
-    ]
+    [ Directive ".text"; Directive ".globl main"; Comment "ToyC Compiler Generated Code" ]
   in
   (* 生成所有函数 *)
   let func_asm_items =
     List.map
       (fun func_def ->
-         let instrs = gen_function symbol_table func_def in
-         let asm_items_with_labels = insert_missing_labels instrs in
-         [ Riscv.Label func_def.name; Riscv.Comment ("Function: " ^ func_def.name) ]
-         @ asm_items_with_labels)
+         let items = gen_function symbol_table func_def in
+         [ Label func_def.name; Comment ("Function: " ^ func_def.name) ] @ items)
       program
     |> List.flatten
   in
