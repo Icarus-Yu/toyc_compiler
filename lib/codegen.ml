@@ -6,10 +6,12 @@
 open Ast
 open Riscv
 
+(* 全局标签计数器 *)
+let global_label_counter = ref 0
+
 (* 代码生成上下文 *)
 type codegen_context =
-  { mutable label_counter : int (* 标签计数器 *)
-  ; mutable temp_counter : int (* 临时寄存器计数器 *)
+  { mutable temp_counter : int (* 临时寄存器计数器 *)
   ; mutable stack_offset : int (* 当前栈偏移 *)
   ; mutable break_labels : string list (* break 跳转标签栈 *)
   ; mutable continue_labels : string list (* continue 跳转标签栈 *)
@@ -18,8 +20,7 @@ type codegen_context =
 
 (* 创建新的代码生成上下文 *)
 let create_context _symbol_table =
-  { label_counter = 0
-  ; temp_counter = 0
+  { temp_counter = 0
   ; stack_offset = 0 (* fp-based offset, starts from 0 and goes down *)
   ; break_labels = []
   ; continue_labels = []
@@ -28,9 +29,9 @@ let create_context _symbol_table =
 ;;
 
 (* 生成新标签 *)
-let new_label ctx prefix =
-  let label = Printf.sprintf "%s%d" prefix ctx.label_counter in
-  ctx.label_counter <- ctx.label_counter + 1;
+let new_label _ctx prefix =
+  let label = Printf.sprintf "%s%d" prefix !global_label_counter in
+  global_label_counter := !global_label_counter + 1;
   label
 ;;
 
@@ -340,6 +341,8 @@ let gen_function symbol_table (func_def : Ast.func_def) : asm_item list =
 
 (* 生成程序代码 *)
 let gen_program symbol_table (program : Ast.comp_unit) =
+  (* 重置全局标签计数器 *)
+  global_label_counter := 0;
   (* 全局声明 *)
   let header =
     [ Directive ".text"; Directive ".globl main"; Comment "ToyC Compiler Generated Code" ]
