@@ -16,8 +16,8 @@ fact:
     beq t2, zero, else0
     li t3, 1
     mv a0, t3
-    lw ra, -4(fp)
-    lw t0, -8(fp)
+    lw ra, 12(sp)
+    lw t0, 8(sp)
     addi sp, sp, 16
     mv fp, t0
     ret
@@ -31,8 +31,8 @@ else0:
     jal ra, fact
     mul t1, t4, a0
     mv a0, t1
-    lw ra, -4(fp)
-    lw t0, -8(fp)
+    lw ra, 12(sp)
+    lw t0, 8(sp)
     addi sp, sp, 16
     mv fp, t0
     ret
@@ -48,8 +48,8 @@ main:
     mv a0, t0
     jal ra, fact
     mv a0, a0
-    lw ra, -4(fp)
-    lw t0, -8(fp)
+    lw ra, 12(sp)
+    lw t0, 8(sp)
     addi sp, sp, 16
     mv fp, t0
     ret

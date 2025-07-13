@@ -65,7 +65,15 @@ let get_var_offset ctx name =
   | Not_found -> failwith ("Variable not found: " ^ name)
 ;;
 
-(* 生成表达式代码，返回结果寄存器和指令列表 *)
+(* Helper function to check if an expression might use A0 *)
+let rec expr_might_use_a0 = function
+  | Ast.Call _ -> true
+  | Ast.BinaryOp (_, e1, e2) -> expr_might_use_a0 e1 || expr_might_use_a0 e2
+  | Ast.UnaryOp (_, e) -> expr_might_use_a0 e
+  | _ -> false
+;;
+
+(* Generate expression code with proper A0 handling *)
 let rec gen_expr ctx (expr : Ast.expr) : reg * instruction list =
   match expr with
   | Ast.Int n ->
@@ -88,30 +96,58 @@ let rec gen_expr ctx (expr : Ast.expr) : reg * instruction list =
     result_reg, instrs
   | Ast.BinaryOp (op, e1, e2) ->
     let e1_reg, e1_instrs = gen_expr ctx e1 in
+    (* Special handling: if e2 might use A0 and e1 result is in A0, save e1 result *)
+    (* Also, for logical operations (And, Or), always save e1 result to avoid register conflicts *)
+    let e1_save_instrs, e1_final_reg =
+      if (e1_reg = A0 && expr_might_use_a0 e2) || op = Ast.And || op = Ast.Or
+      then (
+        let temp_reg = get_temp_reg ctx in
+        [ Mv (temp_reg, e1_reg) ], temp_reg)
+      else [], e1_reg
+    in
     let e2_reg, e2_instrs = gen_expr ctx e2 in
     let result_reg = get_temp_reg ctx in
     let op_instrs =
       match op with
-      | Ast.Add -> [ Add (result_reg, e1_reg, e2_reg) ]
-      | Ast.Sub -> [ Sub (result_reg, e1_reg, e2_reg) ]
-      | Ast.Mul -> [ Mul (result_reg, e1_reg, e2_reg) ]
-      | Ast.Div -> [ Div (result_reg, e1_reg, e2_reg) ]
-      | Ast.Mod -> [ Rem (result_reg, e1_reg, e2_reg) ]
-      | Ast.Eq -> [ Sub (result_reg, e1_reg, e2_reg); Sltiu (result_reg, result_reg, 1) ]
+      | Ast.Add -> [ Add (result_reg, e1_final_reg, e2_reg) ]
+      | Ast.Sub -> [ Sub (result_reg, e1_final_reg, e2_reg) ]
+      | Ast.Mul -> [ Mul (result_reg, e1_final_reg, e2_reg) ]
+      | Ast.Div -> [ Div (result_reg, e1_final_reg, e2_reg) ]
+      | Ast.Mod -> [ Rem (result_reg, e1_final_reg, e2_reg) ]
+      | Ast.Eq ->
+        [ Sub (result_reg, e1_final_reg, e2_reg); Sltiu (result_reg, result_reg, 1) ]
       | Ast.Neq ->
-        [ Sub (result_reg, e1_reg, e2_reg); Sltu (result_reg, Zero, result_reg) ]
-      | Ast.Lt -> [ Slt (result_reg, e1_reg, e2_reg) ]
-      | Ast.Leq -> [ Slt (result_reg, e2_reg, e1_reg); Xori (result_reg, result_reg, 1) ]
-      | Ast.Gt -> [ Slt (result_reg, e2_reg, e1_reg) ]
-      | Ast.Geq -> [ Slt (result_reg, e1_reg, e2_reg); Xori (result_reg, result_reg, 1) ]
-      | Ast.And ->
-        (* This is a shortcut, not a full logical AND with short-circuiting *)
-        [ Sltu (T0, Zero, e1_reg); Sltu (T1, Zero, e2_reg); And (result_reg, T0, T1) ]
-      | Ast.Or ->
-        (* This is a shortcut, not a full logical OR with short-circuiting *)
-        [ Or (result_reg, e1_reg, e2_reg); Sltu (result_reg, Zero, result_reg) ]
+        [ Sub (result_reg, e1_final_reg, e2_reg); Sltu (result_reg, Zero, result_reg) ]
+      | Ast.Lt -> [ Slt (result_reg, e1_final_reg, e2_reg) ]
+      | Ast.Leq ->
+        [ Slt (result_reg, e2_reg, e1_final_reg); Xori (result_reg, result_reg, 1) ]
+      | Ast.Gt -> [ Slt (result_reg, e2_reg, e1_final_reg) ]
+      | Ast.Geq ->
+        [ Slt (result_reg, e1_final_reg, e2_reg); Xori (result_reg, result_reg, 1) ]
+      | Ast.And | Ast.Or ->
+        (* Handled separately in instrs construction *)
+        []
     in
-    let instrs = e1_instrs @ e2_instrs @ op_instrs in
+    let instrs =
+      match op with
+      | Ast.And | Ast.Or ->
+        (* Special handling for logical operations to prevent register conflicts *)
+        let e1_bool_convert = [ Sltu (T5, Zero, e1_final_reg) ] in
+        let e2_bool_convert = [ Sltu (T6, Zero, e2_reg) ] in
+        let logical_op =
+          match op with
+          | Ast.And -> [ And (result_reg, T5, T6) ]
+          | Ast.Or -> [ Or (result_reg, T5, T6) ]
+          | _ -> failwith "Impossible"
+        in
+        e1_instrs
+        @ e1_save_instrs
+        @ e1_bool_convert
+        @ e2_instrs
+        @ e2_bool_convert
+        @ logical_op
+      | _ -> e1_instrs @ e1_save_instrs @ e2_instrs @ op_instrs
+    in
     result_reg, instrs
   | Ast.Call (fname, args) ->
     let result_reg = A0 in
@@ -141,9 +177,9 @@ let rec gen_expr ctx (expr : Ast.expr) : reg * instruction list =
 
 (* Generate epilogue *)
 let gen_epilogue_instrs frame_size =
-  [ (* Restore registers using frame pointer before releasing stack frame *)
-    Lw (Ra, -4, Fp) (* Restore return address *)
-  ; Lw (T0, -8, Fp) (* Load old frame pointer into temp register *)
+  [ (* Restore registers from correct stack positions before releasing stack frame *)
+    Lw (Ra, frame_size - 4, Sp) (* Restore return address from sp + (frame_size - 4) *)
+  ; Lw (T0, frame_size - 8, Sp) (* Load old frame pointer from sp + (frame_size - 8) *)
   ; Addi (Sp, Sp, frame_size) (* Release stack frame *)
   ; Mv (Fp, T0) (* Restore old frame pointer *)
   ; Ret (* Return to caller *)
