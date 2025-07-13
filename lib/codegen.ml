@@ -378,8 +378,8 @@ let gen_function symbol_table (func_def : Ast.func_def) : asm_item list =
              [ Instruction (Sw (arg_reg, offset, Fp)) ])
            else (
              (* Parameters beyond 8 are already on stack, copy them to local vars *)
-             (* They are at fp + 8 + (i-8)*4 (above the frame pointer) *)
-             let stack_param_offset = 8 + ((i - 8) * 4) in
+             (* They are at fp + (i-8)*4 (caller's stack frame) *)
+             let stack_param_offset = (i - 8) * 4 in
              let temp_reg = get_temp_reg ctx in
              [ Instruction (Lw (temp_reg, stack_param_offset, Fp))
              ; Instruction (Sw (temp_reg, offset, Fp))
