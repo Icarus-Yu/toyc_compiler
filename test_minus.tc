@@ -1,0 +1,6 @@
+int main() {
+    int a = 1;
+    int d = 4;
+    int result = a + -d + 2048;
+    return result;
+}
