@@ -287,22 +287,39 @@ let rec gen_stmt ctx frame_size (stmt : Ast.stmt) : asm_item list =
 
 (* 计算函数所需的栈帧大小 *)
 let calculate_frame_size (func_def : Ast.func_def) =
-  (* Helper to count declarations in a statement *)
-  let rec count_decls_in_stmt stmt =
+  (* Helper to count all declarations including nested blocks *)
+  let rec count_all_decls_in_stmt stmt =
     match stmt with
     | Declare _ -> 1
-    | Block stmts -> List.fold_left (fun acc s -> acc + count_decls_in_stmt s) 0 stmts
-    | If (_, s1, Some s2) -> count_decls_in_stmt s1 + count_decls_in_stmt s2
-    | If (_, s1, None) -> count_decls_in_stmt s1
-    | While (_, s) -> count_decls_in_stmt s
+    | Block stmts ->
+      (* For nested blocks, all variables are live simultaneously *)
+      List.fold_left (fun acc s -> acc + count_all_decls_in_stmt s) 0 stmts
+    | If (_, s1, Some s2) -> count_all_decls_in_stmt s1 + count_all_decls_in_stmt s2
+    | If (_, s1, None) -> count_all_decls_in_stmt s1
+    | While (_, s) -> count_all_decls_in_stmt s
     | _ -> 0
   in
-  let num_locals = count_decls_in_stmt func_def.body in
+  let num_locals = count_all_decls_in_stmt func_def.body in
   let num_params = List.length func_def.params in
   (* ra, fp + params + locals *)
   let required_space = 8 + (num_params * 4) + (num_locals * 4) in
-  (* Align to 16 bytes *)
-  (required_space + 15) / 16 * 16
+  (* For functions with many variables, add safety margin for complex expressions *)
+  let safe_space =
+    if num_locals > 100
+    then required_space + 32 (* Add 32 bytes safety margin for complex expressions *)
+    else required_space
+  in
+  (* For functions with many variables, use more conservative alignment *)
+  let aligned_space =
+    if num_locals > 100
+    then
+      (* Use 32-byte alignment for functions with many variables *)
+      (safe_space + 31) / 32 * 32
+    else
+      (* Standard 16-byte alignment *)
+      (safe_space + 15) / 16 * 16
+  in
+  aligned_space
 ;;
 
 (* 生成函数代码 *)

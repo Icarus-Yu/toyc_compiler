@@ -16,8 +16,8 @@ abs:
     lw t3, -12(fp)
     sub t4, zero, t3
     mv a0, t4
-    lw ra, -4(fp)
-    lw t0, -8(fp)
+    lw ra, 12(sp)
+    lw t0, 8(sp)
     addi sp, sp, 16
     mv fp, t0
     ret
@@ -25,8 +25,8 @@ abs:
 else0:
     lw t5, -12(fp)
     mv a0, t5
-    lw ra, -4(fp)
-    lw t0, -8(fp)
+    lw ra, 12(sp)
+    lw t0, 8(sp)
     addi sp, sp, 16
     mv fp, t0
     ret
@@ -57,21 +57,23 @@ compute:
     jal ra, abs
     li t0, 1
     add t1, a0, t0
-    div t2, t5, t1
-    sub t3, t4, t2
-    lw t4, -32(fp)
-    lw t5, -36(fp)
-    mv a0, t5
+    lw t2, -24(fp)
+    div t3, t2, t1
+    sub t4, t4, t3
+    lw t5, -32(fp)
+    lw t6, -36(fp)
+    mv a0, t6
     jal ra, abs
-    li t6, 1
-    add t0, a0, t6
-    rem t1, t4, t0
-    lw t2, -40(fp)
-    mul t3, t1, t2
-    add t4, t3, t3
-    mv a0, t4
-    lw ra, -4(fp)
-    lw t0, -8(fp)
+    li t0, 1
+    add t1, a0, t0
+    lw t2, -32(fp)
+    rem t3, t2, t1
+    lw t4, -40(fp)
+    mul t5, t3, t4
+    add t6, t4, t5
+    mv a0, t6
+    lw ra, 44(sp)
+    lw t0, 40(sp)
     addi sp, sp, 48
     mv fp, t0
     ret
@@ -838,8 +840,8 @@ main:
     sw a0, -604(fp)
     lw t1, -604(fp)
     mv a0, t1
-    lw ra, -4(fp)
-    lw t0, -8(fp)
+    lw ra, 604(sp)
+    lw t0, 600(sp)
     addi sp, sp, 608
     mv fp, t0
     ret
