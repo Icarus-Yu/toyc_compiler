@@ -18,8 +18,8 @@ factorial:
     beq t3, zero, else0
     li t4, 1
     mv a0, t4
-    lw ra, -4(fp)
-    lw t0, -8(fp)
+    lw ra, 12(sp)
+    lw t0, 8(sp)
     addi sp, sp, 16
     mv fp, t0
     ret
@@ -42,8 +42,8 @@ loop2:
 endloop3:
     lw t0, -16(fp)
     mv a0, t0
-    lw ra, -4(fp)
-    lw t0, -8(fp)
+    lw ra, 12(sp)
+    lw t0, 8(sp)
     addi sp, sp, 16
     mv fp, t0
     ret
@@ -66,83 +66,86 @@ main:
     lw t5, -12(fp)
     lw t6, -16(fp)
     slt t0, t6, t5
+    mv t1, t0
+    sltu t5, zero, t1
+    lw t2, -12(fp)
+    lw t3, -16(fp)
+    sub t4, t2, t3
+    li t5, 1
+    slt t6, t5, t4
+    sltu t6, zero, t6
+    and t0, t5, t6
+    beq t0, zero, else0
     lw t1, -12(fp)
-    lw t2, -16(fp)
-    sub t3, t1, t2
-    li t4, 1
-    slt t5, t4, t3
-    sltu t0, zero, t0
-    sltu t1, zero, t5
-    and t6, t0, t1
-    beq t6, zero, else0
-    lw t0, -12(fp)
-    mv a0, t0
+    mv a0, t1
     jal ra, factorial
     sw a0, -20(fp)
     j endif1
 else0:
-    lw t1, -12(fp)
-    lw t2, -16(fp)
-    slt t3, t1, t2
-    lw t4, -12(fp)
-    lw t5, -16(fp)
-    sub t6, t4, t5
-    sltiu t6, t6, 1
-    or t0, t3, t6
-    sltu t0, zero, t0
-    beq t0, zero, else2
-    lw t1, -12(fp)
-    lw t2, -16(fp)
-    add t3, t1, t2
-    sub t4, zero, t3
-    mv a0, t4
+    lw t2, -12(fp)
+    lw t3, -16(fp)
+    slt t4, t2, t3
+    mv t5, t4
+    sltu t5, zero, t5
+    lw t6, -12(fp)
+    lw t0, -16(fp)
+    sub t1, t6, t0
+    sltiu t1, t1, 1
+    sltu t6, zero, t1
+    or t2, t5, t6
+    beq t2, zero, else2
+    lw t3, -12(fp)
+    lw t4, -16(fp)
+    add t5, t3, t4
+    sub t6, zero, t5
+    mv a0, t6
     jal ra, factorial
     sw a0, -20(fp)
     j endif3
 else2:
-    lw t5, -12(fp)
-    lw t6, -16(fp)
-    mul t0, t5, t6
-    mv a0, t0
+    lw t0, -12(fp)
+    lw t1, -16(fp)
+    mul t2, t0, t1
+    mv a0, t2
     jal ra, factorial
     sw a0, -20(fp)
 endif3:
 endif1:
 loop4:
-    lw t1, -20(fp)
-    li t2, 100
-    slt t3, t2, t1
-    beq t3, zero, endloop5
+    lw t3, -20(fp)
+    li t4, 100
+    slt t5, t4, t3
+    beq t5, zero, endloop5
+    lw t6, -20(fp)
+    li t0, 2
+    rem t1, t6, t0
+    li t2, 0
+    sub t3, t1, t2
+    sltiu t3, t3, 1
+    beq t3, zero, else6
     lw t4, -20(fp)
     li t5, 2
-    rem t6, t4, t5
-    li t0, 0
-    sub t1, t6, t0
-    sltiu t1, t1, 1
-    beq t1, zero, else6
-    lw t2, -20(fp)
-    li t3, 2
-    div t4, t2, t3
-    sw t4, -20(fp)
+    div t6, t4, t5
+    sw t6, -20(fp)
     j endif7
 else6:
-    lw t5, -20(fp)
-    li t6, 1
-    sub t0, t5, t6
-    sw t0, -20(fp)
+    lw t0, -20(fp)
+    li t1, 1
+    sub t2, t0, t1
+    sw t2, -20(fp)
 endif7:
     j loop4
 endloop5:
-    lw t1, -20(fp)
-    li t2, 8
-    rem t3, t1, t2
-    li t4, 3
-    mv a0, t4
+    lw t3, -20(fp)
+    li t4, 8
+    rem t5, t3, t4
+    li t6, 3
+    mv a0, t6
     jal ra, factorial
-    div t5, t3, a0
-    mv a0, t5
-    lw ra, -4(fp)
-    lw t0, -8(fp)
+    div t0, t5, a0
+    mv a0, t0
+    lw ra, 28(sp)
+    lw t0, 24(sp)
     addi sp, sp, 32
     mv fp, t0
     ret

@@ -96,17 +96,36 @@ let rec gen_expr ctx (expr : Ast.expr) : reg * instruction list =
     in
     result_reg, instrs
   | Ast.BinaryOp (op, e1, e2) ->
+    (* Check if e2 contains function calls that might overwrite temporary registers *)
+    let e2_has_call = expr_might_use_a0 e2 in
     let e1_reg, e1_instrs = gen_expr ctx e1 in
-    (* Special handling: if e2 might use A0 and e1 result is in A0, save e1 result *)
-    (* Also, for logical operations (And, Or), always save e1 result to avoid register conflicts *)
-    let e1_save_instrs, e1_final_reg =
-      if (e1_reg = A0 && expr_might_use_a0 e2) || op = Ast.And || op = Ast.Or
-      then (
+    (* For variables that will be used after a function call, we need special handling *)
+    let e1_save_strategy =
+      match e1, e2_has_call with
+      | Ast.Var var_name, true ->
+        (* For variables used after function calls, reload from stack instead of saving to temp reg *)
+        `ReloadFromStack var_name
+      | _, true when e1_reg = A0 || op = Ast.And || op = Ast.Or ->
+        (* For other cases where e1 needs protection and e2 has calls *)
         let temp_reg = get_temp_reg ctx in
-        [ Mv (temp_reg, e1_reg) ], temp_reg)
-      else [], e1_reg
+        `SaveToReg ([ Mv (temp_reg, e1_reg) ], temp_reg)
+      | _, _ when op = Ast.And || op = Ast.Or ->
+        (* For logical operations, always save to avoid conflicts *)
+        let temp_reg = get_temp_reg ctx in
+        `SaveToReg ([ Mv (temp_reg, e1_reg) ], temp_reg)
+      | _ -> `NoSave e1_reg
     in
     let e2_reg, e2_instrs = gen_expr ctx e2 in
+    (* Get the final e1 register based on the save strategy *)
+    let e1_save_instrs, e1_final_reg =
+      match e1_save_strategy with
+      | `ReloadFromStack var_name ->
+        let offset = get_var_offset ctx var_name in
+        let reload_reg = get_temp_reg ctx in
+        [ Lw (reload_reg, offset, Fp) ], reload_reg
+      | `SaveToReg (instrs, reg) -> instrs, reg
+      | `NoSave reg -> [], reg
+    in
     let result_reg = get_temp_reg ctx in
     let op_instrs =
       match op with
@@ -142,12 +161,16 @@ let rec gen_expr ctx (expr : Ast.expr) : reg * instruction list =
           | _ -> failwith "Impossible"
         in
         e1_instrs
-        @ e1_save_instrs
-        @ e1_bool_convert
         @ e2_instrs
+        @ e1_save_instrs (* Reload e1 after e2 computation if needed *)
+        @ e1_bool_convert
         @ e2_bool_convert
         @ logical_op
-      | _ -> e1_instrs @ e1_save_instrs @ e2_instrs @ op_instrs
+      | _ ->
+        e1_instrs
+        @ e2_instrs
+        @ e1_save_instrs (* Reload e1 after e2 computation if needed *)
+        @ op_instrs
     in
     result_reg, instrs
   | Ast.Call (fname, args) ->
