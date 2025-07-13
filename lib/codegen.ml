@@ -179,24 +179,40 @@ let rec gen_expr ctx (expr : Ast.expr) : reg * instruction list =
       List.mapi
         (fun i arg ->
            let arg_reg, arg_code = gen_expr ctx arg in
-           let target_reg =
-             match i with
-             | 0 -> A0
-             | 1 -> A1
-             | 2 -> A2
-             | 3 -> A3
-             | 4 -> A4
-             | 5 -> A5
-             | 6 -> A6
-             | 7 -> A7
-             | _ -> failwith "Too many arguments"
-           in
-           arg_code @ [ Mv (target_reg, arg_reg) ])
+           if i < 8 then
+             (* First 8 arguments go in registers A0-A7 *)
+             let target_reg =
+               match i with
+               | 0 -> A0
+               | 1 -> A1
+               | 2 -> A2
+               | 3 -> A3
+               | 4 -> A4
+               | 5 -> A5
+               | 6 -> A6
+               | 7 -> A7
+               | _ -> failwith "Impossible"
+             in
+             arg_code @ [ Mv (target_reg, arg_reg) ]
+           else
+             (* Arguments beyond 8 go on stack *)
+             (* Stack grows downward, args are at sp + 0, sp + 4, sp + 8, ... *)
+             let stack_offset = (i - 8) * 4 in
+             arg_code @ [ Sw (arg_reg, stack_offset, Sp) ])
         args
       |> List.flatten
     in
+    (* Reserve stack space for arguments beyond 8 if needed *)
+    let num_stack_args = max 0 (List.length args - 8) in
+    let stack_space = num_stack_args * 4 in
+    let pre_call_instrs = 
+      if stack_space > 0 then [ Addi (Sp, Sp, -stack_space) ] else []
+    in
+    let post_call_instrs = 
+      if stack_space > 0 then [ Addi (Sp, Sp, stack_space) ] else []
+    in
     let call_instr = [ Jal (Ra, fname) ] in
-    result_reg, arg_instrs @ call_instr
+    result_reg, pre_call_instrs @ arg_instrs @ call_instr @ post_call_instrs
 ;;
 
 (* Generate epilogue *)
@@ -345,19 +361,29 @@ let gen_function symbol_table (func_def : Ast.func_def) : asm_item list =
          match param with
          | Ast.Param name ->
            let offset = add_local_var ctx name in
-           let arg_reg =
-             match i with
-             | 0 -> A0
-             | 1 -> A1
-             | 2 -> A2
-             | 3 -> A3
-             | 4 -> A4
-             | 5 -> A5
-             | 6 -> A6
-             | 7 -> A7
-             | _ -> failwith "Too many parameters"
-           in
-           [ Instruction (Sw (arg_reg, offset, Fp)) ])
+           if i < 8 then
+             (* First 8 parameters come from registers A0-A7 *)
+             let arg_reg =
+               match i with
+               | 0 -> A0
+               | 1 -> A1
+               | 2 -> A2
+               | 3 -> A3
+               | 4 -> A4
+               | 5 -> A5
+               | 6 -> A6
+               | 7 -> A7
+               | _ -> failwith "Impossible"
+             in
+             [ Instruction (Sw (arg_reg, offset, Fp)) ]
+           else
+             (* Parameters beyond 8 are already on stack, copy them to local vars *)
+             (* They are at fp + 8 + (i-8)*4 (above the frame pointer) *)
+             let stack_param_offset = 8 + (i - 8) * 4 in
+             let temp_reg = get_temp_reg ctx in
+             [ Instruction (Lw (temp_reg, stack_param_offset, Fp))
+             ; Instruction (Sw (temp_reg, offset, Fp))
+             ])
       func_def.params
     |> List.flatten
   in
