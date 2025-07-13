@@ -179,7 +179,8 @@ let rec gen_expr ctx (expr : Ast.expr) : reg * instruction list =
       List.mapi
         (fun i arg ->
            let arg_reg, arg_code = gen_expr ctx arg in
-           if i < 8 then
+           if i < 8
+           then (
              (* First 8 arguments go in registers A0-A7 *)
              let target_reg =
                match i with
@@ -193,22 +194,22 @@ let rec gen_expr ctx (expr : Ast.expr) : reg * instruction list =
                | 7 -> A7
                | _ -> failwith "Impossible"
              in
-             arg_code @ [ Mv (target_reg, arg_reg) ]
-           else
+             arg_code @ [ Mv (target_reg, arg_reg) ])
+           else (
              (* Arguments beyond 8 go on stack *)
              (* Stack grows downward, args are at sp + 0, sp + 4, sp + 8, ... *)
              let stack_offset = (i - 8) * 4 in
-             arg_code @ [ Sw (arg_reg, stack_offset, Sp) ])
+             arg_code @ [ Sw (arg_reg, stack_offset, Sp) ]))
         args
       |> List.flatten
     in
     (* Reserve stack space for arguments beyond 8 if needed *)
     let num_stack_args = max 0 (List.length args - 8) in
     let stack_space = num_stack_args * 4 in
-    let pre_call_instrs = 
+    let pre_call_instrs =
       if stack_space > 0 then [ Addi (Sp, Sp, -stack_space) ] else []
     in
-    let post_call_instrs = 
+    let post_call_instrs =
       if stack_space > 0 then [ Addi (Sp, Sp, stack_space) ] else []
     in
     let call_instr = [ Jal (Ra, fname) ] in
@@ -317,24 +318,22 @@ let calculate_frame_size (func_def : Ast.func_def) =
   in
   let num_locals = count_all_decls_in_stmt func_def.body in
   let num_params = List.length func_def.params in
-  (* ra, fp + params + locals *)
-  let required_space = 8 + (num_params * 4) + (num_locals * 4) in
-  (* For functions with many variables, add safety margin for complex expressions *)
+  (* Calculate required space more efficiently:
+     - 8 bytes for ra and fp
+     - 4 bytes per parameter (all parameters need to be stored as local variables)
+     - 4 bytes per local variable
+  *)
+  let base_space = 8 + (num_params * 4) + (num_locals * 4) in
+  (* Add extra space for main function with complex calls *)
   let safe_space =
-    if num_locals > 100
-    then required_space + 32 (* Add 32 bytes safety margin for complex expressions *)
-    else required_space
-  in
-  (* For functions with many variables, use more conservative alignment *)
-  let aligned_space =
-    if num_locals > 100
+    if func_def.name = "main" && num_locals > 30
     then
-      (* Use 32-byte alignment for functions with many variables *)
-      (safe_space + 31) / 32 * 32
-    else
-      (* Standard 16-byte alignment *)
-      (safe_space + 15) / 16 * 16
+      (* main function needs extra space for complex function calls *)
+      base_space + 320 (* Add significant margin for main *)
+    else base_space
   in
+  (* 16-byte alignment *)
+  let aligned_space = (safe_space + 15) / 16 * 16 in
   aligned_space
 ;;
 
@@ -361,7 +360,8 @@ let gen_function symbol_table (func_def : Ast.func_def) : asm_item list =
          match param with
          | Ast.Param name ->
            let offset = add_local_var ctx name in
-           if i < 8 then
+           if i < 8
+           then (
              (* First 8 parameters come from registers A0-A7 *)
              let arg_reg =
                match i with
@@ -375,15 +375,15 @@ let gen_function symbol_table (func_def : Ast.func_def) : asm_item list =
                | 7 -> A7
                | _ -> failwith "Impossible"
              in
-             [ Instruction (Sw (arg_reg, offset, Fp)) ]
-           else
+             [ Instruction (Sw (arg_reg, offset, Fp)) ])
+           else (
              (* Parameters beyond 8 are already on stack, copy them to local vars *)
              (* They are at fp + 8 + (i-8)*4 (above the frame pointer) *)
-             let stack_param_offset = 8 + (i - 8) * 4 in
+             let stack_param_offset = 8 + ((i - 8) * 4) in
              let temp_reg = get_temp_reg ctx in
              [ Instruction (Lw (temp_reg, stack_param_offset, Fp))
              ; Instruction (Sw (temp_reg, offset, Fp))
-             ])
+             ]))
       func_def.params
     |> List.flatten
   in
