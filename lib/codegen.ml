@@ -304,36 +304,41 @@ let rec gen_stmt ctx frame_size (stmt : Ast.stmt) : asm_item list =
 
 (* 计算函数所需的栈帧大小 *)
 let calculate_frame_size (func_def : Ast.func_def) =
-  (* Helper to count all declarations including nested blocks *)
-  let rec count_all_decls_in_stmt stmt =
+  (* Helper to calculate maximum concurrent variables at any depth *)
+  let rec max_concurrent_vars_in_stmt stmt =
     match stmt with
     | Declare _ -> 1
     | Block stmts ->
-      (* For nested blocks, all variables are live simultaneously *)
-      List.fold_left (fun acc s -> acc + count_all_decls_in_stmt s) 0 stmts
-    | If (_, s1, Some s2) -> count_all_decls_in_stmt s1 + count_all_decls_in_stmt s2
-    | If (_, s1, None) -> count_all_decls_in_stmt s1
-    | While (_, s) -> count_all_decls_in_stmt s
+      (* For a block, count direct declarations + maximum from any sub-statement *)
+      let direct_decls =
+        List.fold_left
+          (fun acc s ->
+             match s with
+             | Declare _ -> acc + 1
+             | _ -> acc)
+          0
+          stmts
+      in
+      let max_nested =
+        List.fold_left (fun acc s -> max acc (max_concurrent_vars_in_stmt s)) 0 stmts
+      in
+      direct_decls + max_nested
+    | If (_, s1, Some s2) ->
+      max (max_concurrent_vars_in_stmt s1) (max_concurrent_vars_in_stmt s2)
+    | If (_, s1, None) -> max_concurrent_vars_in_stmt s1
+    | While (_, s) -> max_concurrent_vars_in_stmt s
     | _ -> 0
   in
-  let num_locals = count_all_decls_in_stmt func_def.body in
+  let num_locals = max_concurrent_vars_in_stmt func_def.body in
   let num_params = List.length func_def.params in
-  (* Calculate required space more efficiently:
+  (* Calculate required space:
      - 8 bytes for ra and fp
      - 4 bytes per parameter (all parameters need to be stored as local variables)
-     - 4 bytes per local variable
+     - 4 bytes per local variable (only maximum concurrent variables)
   *)
   let base_space = 8 + (num_params * 4) + (num_locals * 4) in
-  (* Add extra space for main function with complex calls *)
-  let safe_space =
-    if func_def.name = "main" && num_locals > 30
-    then
-      (* main function needs extra space for complex function calls *)
-      base_space + 320 (* Add significant margin for main *)
-    else base_space
-  in
   (* 16-byte alignment *)
-  let aligned_space = (safe_space + 15) / 16 * 16 in
+  let aligned_space = (base_space + 15) / 16 * 16 in
   aligned_space
 ;;
 
