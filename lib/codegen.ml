@@ -173,7 +173,8 @@ let rec gen_expr ctx (expr : Ast.expr) : reg * instruction list =
     let instrs =
       match op with
       | Ast.And | Ast.Or ->
-        (* Special handling for logical operations to prevent register conflicts *)
+        (* 对于逻辑运算符，暂时不实现短路求值，但保持功能正确 *)
+        (* TODO: 在后续版本中实现短路求值 *)
         let e1_bool_convert = [ Sltu (T5, Zero, e1_final_reg) ] in
         let e2_bool_convert = [ Sltu (T6, Zero, e2_reg) ] in
         let logical_op =
@@ -199,45 +200,61 @@ let rec gen_expr ctx (expr : Ast.expr) : reg * instruction list =
     result_reg, instrs
   | Ast.Call (fname, args) ->
     let result_reg = A0 in
-    let arg_instrs =
-      List.mapi
-        (fun i arg ->
-           let arg_reg, arg_code = gen_expr ctx arg in
-           if i < 8
-           then (
-             (* First 8 arguments go in registers A0-A7 *)
-             let target_reg =
-               match i with
-               | 0 -> A0
-               | 1 -> A1
-               | 2 -> A2
-               | 3 -> A3
-               | 4 -> A4
-               | 5 -> A5
-               | 6 -> A6
-               | 7 -> A7
-               | _ -> failwith "Impossible"
-             in
-             arg_code @ [ Mv (target_reg, arg_reg) ])
-           else (
-             (* Arguments beyond 8 go on stack *)
-             (* Stack grows downward, args are at sp + 0, sp + 4, sp + 8, ... *)
-             let stack_offset = (i - 8) * 4 in
-             arg_code @ [ Sw (arg_reg, stack_offset, Sp) ]))
-        args
-      |> List.flatten
-    in
-    (* Reserve stack space for arguments beyond 8 if needed *)
+    (* 简化的嵌套函数调用处理：
+       对于每个参数，如果它是函数调用，我们计算后立即保存到被调用者保存寄存器
+       这样可以避免被后续函数调用覆盖
+    *)
+    
+    let arg_instrs = ref [] in
+    let saved_results = ref [] in
+    
+    List.iteri (fun i arg ->
+      let arg_reg, arg_code = gen_expr ctx arg in
+      arg_instrs := !arg_instrs @ arg_code;
+      
+      if i < 8 then (
+        (* 前8个参数需要放入寄存器A0-A7 *)
+        let target_reg = match i with
+          | 0 -> A0 | 1 -> A1 | 2 -> A2 | 3 -> A3
+          | 4 -> A4 | 5 -> A5 | 6 -> A6 | 7 -> A7
+          | _ -> failwith "Impossible"
+        in
+        (* 如果参数包含函数调用，需要保存结果避免被覆盖 *)
+        if expr_might_use_a0 arg && i < List.length args - 1 then (
+          (* 使用被调用者保存寄存器保存结果 *)
+          let temp_reg = get_temp_reg ctx in
+          arg_instrs := !arg_instrs @ [Mv (temp_reg, arg_reg)];
+          saved_results := (target_reg, temp_reg) :: !saved_results
+        ) else (
+          (* 直接移动到目标寄存器 *)
+          arg_instrs := !arg_instrs @ [Mv (target_reg, arg_reg)]
+        )
+      ) else (
+        (* 第8个以后的参数放到栈上 *)
+        let stack_offset = (i - 8) * 4 in
+        arg_instrs := !arg_instrs @ [Sw (arg_reg, stack_offset, Sp)]
+      )
+    ) args;
+    
+    (* 恢复保存的结果到正确的寄存器位置 *)
+    let restore_instrs = List.map (fun (target_reg, temp_reg) -> 
+      Mv (target_reg, temp_reg)
+    ) (List.rev !saved_results) in
+    
+    (* 为栈参数预留空间 *)
     let num_stack_args = max 0 (List.length args - 8) in
     let stack_space = num_stack_args * 4 in
     let pre_call_instrs =
       if stack_space > 0 then [ Addi (Sp, Sp, -stack_space) ] else []
     in
+    
     let post_call_instrs =
       if stack_space > 0 then [ Addi (Sp, Sp, stack_space) ] else []
     in
+    
     let call_instr = [ Jal (Ra, fname) ] in
-    result_reg, pre_call_instrs @ arg_instrs @ call_instr @ post_call_instrs
+    
+    result_reg, pre_call_instrs @ !arg_instrs @ restore_instrs @ call_instr @ post_call_instrs
 ;;
 
 (* Generate epilogue with callee-saved register restoration *)
