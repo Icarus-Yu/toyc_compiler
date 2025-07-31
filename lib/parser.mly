@@ -37,7 +37,7 @@
 %left LT LEQ GT GEQ
 %left PLUS MINUS
 %left STAR SLASH MOD
-%right NOT
+%right NOT UMINUS UPLUS
 
 /* 解决悬空else问题：ELSE与最近的IF匹配 */
 %nonassoc LOWER_THAN_ELSE
@@ -187,7 +187,8 @@ expr4:
 ;
 
 expr5:
-  MINUS expr5 { UnaryOp (Neg, $2) }
+  PLUS expr5 %prec UPLUS  { UnaryOp (Pos, $2) }
+| MINUS expr5 %prec UMINUS { UnaryOp (Neg, $2) }
 | NOT expr5   { UnaryOp (Not, $2) }
 | primary     { $1 }
 ;

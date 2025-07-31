@@ -50,20 +50,17 @@ let get_temp_reg ctx =
     | 5 -> T5
     | 6 -> T6
     (* 当临时寄存器不够时，使用被调用者保存寄存器 S2-S4 *)
-    | 7 -> 
-      if not (List.mem S2 ctx.used_callee_saved) then (
-        ctx.used_callee_saved <- S2 :: ctx.used_callee_saved
-      );
+    | 7 ->
+      if not (List.mem S2 ctx.used_callee_saved)
+      then ctx.used_callee_saved <- S2 :: ctx.used_callee_saved;
       S2
-    | 8 -> 
-      if not (List.mem S3 ctx.used_callee_saved) then (
-        ctx.used_callee_saved <- S3 :: ctx.used_callee_saved
-      );
+    | 8 ->
+      if not (List.mem S3 ctx.used_callee_saved)
+      then ctx.used_callee_saved <- S3 :: ctx.used_callee_saved;
       S3
-    | 9 -> 
-      if not (List.mem S4 ctx.used_callee_saved) then (
-        ctx.used_callee_saved <- S4 :: ctx.used_callee_saved
-      );
+    | 9 ->
+      if not (List.mem S4 ctx.used_callee_saved)
+      then ctx.used_callee_saved <- S4 :: ctx.used_callee_saved;
       S4
     | _ -> failwith "Should not happen"
   in
@@ -109,6 +106,7 @@ let rec gen_expr ctx (expr : Ast.expr) : reg * instruction list =
     let result_reg = get_temp_reg ctx in
     let instrs =
       match op with
+      | Ast.Pos -> e_instrs @ [ Mv (result_reg, e_reg) ]
       | Ast.Neg -> e_instrs @ [ Sub (result_reg, Zero, e_reg) ]
       | Ast.Not -> e_instrs @ [ Sltiu (result_reg, e_reg, 1) ]
     in
@@ -136,8 +134,7 @@ let rec gen_expr ctx (expr : Ast.expr) : reg * instruction list =
     (* Apply save strategy BEFORE computing e2 *)
     let e1_save_instrs, e1_final_reg =
       match e1_save_strategy with
-      | `ReloadFromStack _var_name ->
-        [], e1_reg (* Will reload later *)
+      | `ReloadFromStack _var_name -> [], e1_reg (* Will reload later *)
       | `SaveToReg (instrs, reg) -> instrs, reg
       | `NoSave reg -> [], reg
     in
@@ -246,20 +243,22 @@ let rec gen_expr ctx (expr : Ast.expr) : reg * instruction list =
 (* Generate epilogue with callee-saved register restoration *)
 let gen_epilogue_instrs frame_size used_callee_saved =
   (* Restore callee-saved registers in the same order as saved *)
-  let restore_callee_saved = 
-    List.mapi (fun i reg ->
-      let offset = frame_size - 12 - (i * 4) in (* Same offset as save *)
-      Lw (reg, offset, Sp)
-    ) used_callee_saved (* Same order as save *)
+  let restore_callee_saved =
+    List.mapi
+      (fun i reg ->
+         let offset = frame_size - 12 - (i * 4) in
+         (* Same offset as save *)
+         Lw (reg, offset, Sp))
+      used_callee_saved (* Same order as save *)
   in
-  restore_callee_saved @
-  [ (* Restore registers from correct stack positions before releasing stack frame *)
-    Lw (Ra, frame_size - 4, Sp) (* Restore return address from sp + (frame_size - 4) *)
-  ; Lw (T0, frame_size - 8, Sp) (* Load old frame pointer from sp + (frame_size - 8) *)
-  ; Addi (Sp, Sp, frame_size) (* Release stack frame *)
-  ; Mv (Fp, T0) (* Restore old frame pointer *)
-  ; Ret (* Return to caller *)
-  ]
+  restore_callee_saved
+  @ [ (* Restore registers from correct stack positions before releasing stack frame *)
+      Lw (Ra, frame_size - 4, Sp) (* Restore return address from sp + (frame_size - 4) *)
+    ; Lw (T0, frame_size - 8, Sp) (* Load old frame pointer from sp + (frame_size - 8) *)
+    ; Addi (Sp, Sp, frame_size) (* Release stack frame *)
+    ; Mv (Fp, T0) (* Restore old frame pointer *)
+    ; Ret (* Return to caller *)
+    ]
 ;;
 
 (* 生成语句代码 *)
@@ -280,13 +279,22 @@ let rec gen_stmt ctx frame_size (stmt : Ast.stmt) : asm_item list =
     (* Optimize for simple constant 0 *)
     (match e with
      | Ast.Int 0 ->
-       let all_instrs = [ Li (A0, 0) ] @ gen_epilogue_instrs frame_size ctx.used_callee_saved in
+       let all_instrs =
+         [ Li (A0, 0) ] @ gen_epilogue_instrs frame_size ctx.used_callee_saved
+       in
        List.map (fun i -> Instruction i) all_instrs
      | _ ->
        let e_reg, e_instrs = gen_expr ctx e in
-       let all_instrs = e_instrs @ [ Mv (A0, e_reg) ] @ gen_epilogue_instrs frame_size ctx.used_callee_saved in
+       let all_instrs =
+         e_instrs
+         @ [ Mv (A0, e_reg) ]
+         @ gen_epilogue_instrs frame_size ctx.used_callee_saved
+       in
        List.map (fun i -> Instruction i) all_instrs)
-  | Ast.Return None -> List.map (fun i -> Instruction i) (gen_epilogue_instrs frame_size ctx.used_callee_saved)
+  | Ast.Return None ->
+    List.map
+      (fun i -> Instruction i)
+      (gen_epilogue_instrs frame_size ctx.used_callee_saved)
   | Ast.If (cond, then_stmt, else_stmt) ->
     let cond_reg, cond_instrs = gen_expr ctx cond in
     let else_label = new_label ctx "else" in
@@ -369,7 +377,6 @@ let calculate_frame_size (func_def : Ast.func_def) used_callee_saved =
 (* 生成函数代码 *)
 let gen_function symbol_table (func_def : Ast.func_def) : asm_item list =
   let ctx = create_context symbol_table in
-  
   (* 生成函数体以确定使用的被调用者保存寄存器 *)
   (* 先设置参数以便生成函数体 *)
   ctx.stack_offset <- -8;
@@ -380,35 +387,33 @@ let gen_function symbol_table (func_def : Ast.func_def) : asm_item list =
          let _offset = add_local_var ctx name in
          ())
     func_def.params;
-  
-  let temp_frame_size = 1000 in (* 临时的大frame_size *)
+  let temp_frame_size = 1000 in
+  (* 临时的大frame_size *)
   let _temp_body_items = gen_stmt ctx temp_frame_size func_def.body in
-  
   (* 现在我们知道了使用的被调用者保存寄存器，计算真正的frame_size *)
   let frame_size = calculate_frame_size func_def ctx.used_callee_saved in
-  
   (* 生成函数序言，包括保存被调用者保存寄存器 *)
-  let save_callee_saved = 
-    List.mapi (fun i reg ->
-      let offset = frame_size - 12 - (i * 4) in (* After ra(-4) and fp(-8) *)
-      Instruction (Sw (reg, offset, Sp))
-    ) ctx.used_callee_saved
+  let save_callee_saved =
+    List.mapi
+      (fun i reg ->
+         let offset = frame_size - 12 - (i * 4) in
+         (* After ra(-4) and fp(-8) *)
+         Instruction (Sw (reg, offset, Sp)))
+      ctx.used_callee_saved
   in
-  
   let prologue =
     [ Comment "prologue"
     ; Instruction (Addi (Sp, Sp, -frame_size))
     ; Instruction (Sw (Ra, frame_size - 4, Sp))
     ; Instruction (Sw (Fp, frame_size - 8, Sp))
     ; Instruction (Addi (Fp, Sp, frame_size))
-    ] @ save_callee_saved
+    ]
+    @ save_callee_saved
   in
-  
   (* 重新设置参数变量的栈偏移，考虑被调用者保存寄存器 *)
   ctx.temp_counter <- 0;
   ctx.stack_offset <- -8 - (List.length ctx.used_callee_saved * 4);
   ctx.local_vars <- [];
-  
   let param_instrs =
     List.mapi
       (fun i param ->
@@ -442,10 +447,8 @@ let gen_function symbol_table (func_def : Ast.func_def) : asm_item list =
       func_def.params
     |> List.flatten
   in
-  
   (* 重新生成函数体，使用正确的frame_size和变量映射 *)
   let body_items = gen_stmt ctx frame_size func_def.body in
-  
   (* 函数尾声（如果函数没有显式 return） *)
   let epilogue =
     let has_ret =
@@ -457,7 +460,10 @@ let gen_function symbol_table (func_def : Ast.func_def) : asm_item list =
     in
     if has_ret
     then []
-    else List.map (fun i -> Instruction i) (gen_epilogue_instrs frame_size ctx.used_callee_saved)
+    else
+      List.map
+        (fun i -> Instruction i)
+        (gen_epilogue_instrs frame_size ctx.used_callee_saved)
   in
   prologue @ param_instrs @ body_items @ epilogue
 ;;
