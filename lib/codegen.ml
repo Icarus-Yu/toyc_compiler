@@ -173,14 +173,17 @@ let rec gen_expr ctx (expr : Ast.expr) : reg * instruction list =
     let instrs =
       match op with
       | Ast.And | Ast.Or ->
-        (* 对于逻辑运算符，暂时不实现短路求值，但保持功能正确 *)
+        (* 对于逻辑运算符，实现正确的计算逻辑，将所有非零值转换为1 *)
         (* TODO: 在后续版本中实现短路求值 *)
-        let e1_bool_convert = [ Sltu (T5, Zero, e1_final_reg) ] in
-        let e2_bool_convert = [ Sltu (T6, Zero, e2_reg) ] in
+        let temp_reg1 = get_temp_reg ctx in
+        (* 使用新的临时寄存器避免冲突 *)
+        let temp_reg2 = get_temp_reg ctx in
+        let e1_bool_convert = [ Sltu (temp_reg1, Zero, e1_final_reg) ] in
+        let e2_bool_convert = [ Sltu (temp_reg2, Zero, e2_reg) ] in
         let logical_op =
           match op with
-          | Ast.And -> [ And (result_reg, T5, T6) ]
-          | Ast.Or -> [ Or (result_reg, T5, T6) ]
+          | Ast.And -> [ And (result_reg, temp_reg1, temp_reg2) ]
+          | Ast.Or -> [ Or (result_reg, temp_reg1, temp_reg2) ]
           | _ -> failwith "Impossible"
         in
         e1_instrs
@@ -200,61 +203,75 @@ let rec gen_expr ctx (expr : Ast.expr) : reg * instruction list =
     result_reg, instrs
   | Ast.Call (fname, args) ->
     let result_reg = A0 in
-    (* 简化的嵌套函数调用处理：
-       对于每个参数，如果它是函数调用，我们计算后立即保存到被调用者保存寄存器
-       这样可以避免被后续函数调用覆盖
+    (* 改进嵌套函数调用处理：
+       1. 对于递归函数中的嵌套调用，使用被调用者保存寄存器保存中间结果
+       2. 避免使用T0寄存器，因为它会在函数结束时被修改
+       3. 明确处理fibonacci等递归函数的特殊情况
     *)
-    
     let arg_instrs = ref [] in
     let saved_results = ref [] in
-    
-    List.iteri (fun i arg ->
-      let arg_reg, arg_code = gen_expr ctx arg in
-      arg_instrs := !arg_instrs @ arg_code;
-      
-      if i < 8 then (
-        (* 前8个参数需要放入寄存器A0-A7 *)
-        let target_reg = match i with
-          | 0 -> A0 | 1 -> A1 | 2 -> A2 | 3 -> A3
-          | 4 -> A4 | 5 -> A5 | 6 -> A6 | 7 -> A7
-          | _ -> failwith "Impossible"
-        in
-        (* 如果参数包含函数调用，需要保存结果避免被覆盖 *)
-        if expr_might_use_a0 arg && i < List.length args - 1 then (
-          (* 使用被调用者保存寄存器保存结果 *)
-          let temp_reg = get_temp_reg ctx in
-          arg_instrs := !arg_instrs @ [Mv (temp_reg, arg_reg)];
-          saved_results := (target_reg, temp_reg) :: !saved_results
-        ) else (
-          (* 直接移动到目标寄存器 *)
-          arg_instrs := !arg_instrs @ [Mv (target_reg, arg_reg)]
-        )
-      ) else (
-        (* 第8个以后的参数放到栈上 *)
-        let stack_offset = (i - 8) * 4 in
-        arg_instrs := !arg_instrs @ [Sw (arg_reg, stack_offset, Sp)]
-      )
-    ) args;
-    
+    (* 为每个参数生成代码 *)
+    List.iteri
+      (fun i arg ->
+         let arg_reg, arg_code = gen_expr ctx arg in
+         arg_instrs := !arg_instrs @ arg_code;
+         if i < 8
+         then (
+           (* 前8个参数需要放入寄存器A0-A7 *)
+           let target_reg =
+             match i with
+             | 0 -> A0
+             | 1 -> A1
+             | 2 -> A2
+             | 3 -> A3
+             | 4 -> A4
+             | 5 -> A5
+             | 6 -> A6
+             | 7 -> A7
+             | _ -> failwith "Impossible"
+           in
+           (* 如果参数包含函数调用，需要保存结果避免被覆盖 *)
+           if expr_might_use_a0 arg && i < List.length args - 1
+           then (
+             (* 使用被调用者保存寄存器保存结果 - 递归调用使用 S 寄存器 *)
+             (* 这里使用 S2-S4 等稳定寄存器而不是临时T寄存器 *)
+             let save_reg =
+               match i with
+               | 0 -> S2 (* 用S2保存第一个函数调用结果 *)
+               | 1 -> S3 (* 用S3保存第二个函数调用结果 *)
+               | _ -> S4 (* 用S4保存其他函数调用结果 *)
+             in
+             (* 记录使用了哪些被调用者寄存器，以便函数序言/尾声正确保存和恢复 *)
+             if not (List.mem save_reg ctx.used_callee_saved)
+             then ctx.used_callee_saved <- save_reg :: ctx.used_callee_saved;
+             arg_instrs := !arg_instrs @ [ Mv (save_reg, arg_reg) ];
+             saved_results := (target_reg, save_reg) :: !saved_results)
+           else
+             (* 直接移动到目标寄存器 *)
+             arg_instrs := !arg_instrs @ [ Mv (target_reg, arg_reg) ])
+         else (
+           (* 第8个以后的参数放到栈上 *)
+           let stack_offset = (i - 8) * 4 in
+           arg_instrs := !arg_instrs @ [ Sw (arg_reg, stack_offset, Sp) ]))
+      args;
     (* 恢复保存的结果到正确的寄存器位置 *)
-    let restore_instrs = List.map (fun (target_reg, temp_reg) -> 
-      Mv (target_reg, temp_reg)
-    ) (List.rev !saved_results) in
-    
+    let restore_instrs =
+      List.map
+        (fun (target_reg, save_reg) -> Mv (target_reg, save_reg))
+        (List.rev !saved_results)
+    in
     (* 为栈参数预留空间 *)
     let num_stack_args = max 0 (List.length args - 8) in
     let stack_space = num_stack_args * 4 in
     let pre_call_instrs =
       if stack_space > 0 then [ Addi (Sp, Sp, -stack_space) ] else []
     in
-    
     let post_call_instrs =
       if stack_space > 0 then [ Addi (Sp, Sp, stack_space) ] else []
     in
-    
     let call_instr = [ Jal (Ra, fname) ] in
-    
-    result_reg, pre_call_instrs @ !arg_instrs @ restore_instrs @ call_instr @ post_call_instrs
+    ( result_reg
+    , pre_call_instrs @ !arg_instrs @ restore_instrs @ call_instr @ post_call_instrs )
 ;;
 
 (* Generate epilogue with callee-saved register restoration *)
@@ -268,12 +285,14 @@ let gen_epilogue_instrs frame_size used_callee_saved =
          Lw (reg, offset, Sp))
       used_callee_saved (* Same order as save *)
   in
+  (* 注意：S1寄存器不应该在这里恢复，因为它是在used_callee_saved列表中处理的 *)
   restore_callee_saved
   @ [ (* Restore registers from correct stack positions before releasing stack frame *)
       Lw (Ra, frame_size - 4, Sp) (* Restore return address from sp + (frame_size - 4) *)
-    ; Lw (T0, frame_size - 8, Sp) (* Load old frame pointer from sp + (frame_size - 8) *)
+    ; Lw (T0, frame_size - 8, Sp)
+      (* Load old frame pointer from sp + (frame_size - 8) using T0 暂存 *)
     ; Addi (Sp, Sp, frame_size) (* Release stack frame *)
-    ; Mv (Fp, T0) (* Restore old frame pointer *)
+    ; Mv (Fp, T0) (* Restore old frame pointer using T0 *)
     ; Ret (* Return to caller *)
     ]
 ;;
@@ -418,6 +437,9 @@ let gen_function symbol_table (func_def : Ast.func_def) : asm_item list =
          Instruction (Sw (reg, offset, Sp)))
       ctx.used_callee_saved
   in
+  (* 确保S1寄存器被添加到被调用者保存寄存器列表中，但不要重复添加 *)
+  if not (List.mem S1 ctx.used_callee_saved)
+  then ctx.used_callee_saved <- S1 :: ctx.used_callee_saved;
   let prologue =
     [ Comment "prologue"
     ; Instruction (Addi (Sp, Sp, -frame_size))
