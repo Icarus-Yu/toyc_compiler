@@ -40,7 +40,7 @@ let new_label _ctx prefix =
 (* 获取临时寄存器，优先使用临时寄存器，必要时使用被调用者保存寄存器 *)
 let get_temp_reg ctx =
   let reg =
-    match ctx.temp_counter mod 10 with
+    match ctx.temp_counter mod 16 with
     (* 优先使用临时寄存器 T0-T6 *)
     | 0 -> T0
     | 1 -> T1
@@ -49,7 +49,7 @@ let get_temp_reg ctx =
     | 4 -> T4
     | 5 -> T5
     | 6 -> T6
-    (* 当临时寄存器不够时，使用被调用者保存寄存器 S2-S4 *)
+    (* 当临时寄存器不够时，使用被调用者保存寄存器 S2-S11 *)
     | 7 ->
       if not (List.mem S2 ctx.used_callee_saved)
       then ctx.used_callee_saved <- S2 :: ctx.used_callee_saved;
@@ -62,6 +62,30 @@ let get_temp_reg ctx =
       if not (List.mem S4 ctx.used_callee_saved)
       then ctx.used_callee_saved <- S4 :: ctx.used_callee_saved;
       S4
+    | 10 ->
+      if not (List.mem S5 ctx.used_callee_saved)
+      then ctx.used_callee_saved <- S5 :: ctx.used_callee_saved;
+      S5
+    | 11 ->
+      if not (List.mem S6 ctx.used_callee_saved)
+      then ctx.used_callee_saved <- S6 :: ctx.used_callee_saved;
+      S6
+    | 12 ->
+      if not (List.mem S7 ctx.used_callee_saved)
+      then ctx.used_callee_saved <- S7 :: ctx.used_callee_saved;
+      S7
+    | 13 ->
+      if not (List.mem S8 ctx.used_callee_saved)
+      then ctx.used_callee_saved <- S8 :: ctx.used_callee_saved;
+      S8
+    | 14 ->
+      if not (List.mem S9 ctx.used_callee_saved)
+      then ctx.used_callee_saved <- S9 :: ctx.used_callee_saved;
+      S9
+    | 15 ->
+      if not (List.mem S10 ctx.used_callee_saved)
+      then ctx.used_callee_saved <- S10 :: ctx.used_callee_saved;
+      S10
     | _ -> failwith "Should not happen"
   in
   ctx.temp_counter <- ctx.temp_counter + 1;
@@ -140,7 +164,7 @@ let rec gen_expr ctx (expr : Ast.expr) : reg * instruction list =
     in
     let e2_reg, e2_instrs = gen_expr ctx e2 in
     (* Reload variable from stack if needed AFTER e2 computation *)
-    let e1_reload_instrs, e1_final_reg =
+    let e1_reload_instrs, e1_actual_reg =
       match e1_save_strategy with
       | `ReloadFromStack var_name ->
         let offset = get_var_offset ctx var_name in
@@ -151,21 +175,21 @@ let rec gen_expr ctx (expr : Ast.expr) : reg * instruction list =
     let result_reg = get_temp_reg ctx in
     let op_instrs =
       match op with
-      | Ast.Add -> [ Add (result_reg, e1_final_reg, e2_reg) ]
-      | Ast.Sub -> [ Sub (result_reg, e1_final_reg, e2_reg) ]
-      | Ast.Mul -> [ Mul (result_reg, e1_final_reg, e2_reg) ]
-      | Ast.Div -> [ Div (result_reg, e1_final_reg, e2_reg) ]
-      | Ast.Mod -> [ Rem (result_reg, e1_final_reg, e2_reg) ]
+      | Ast.Add -> [ Add (result_reg, e1_actual_reg, e2_reg) ]
+      | Ast.Sub -> [ Sub (result_reg, e1_actual_reg, e2_reg) ]
+      | Ast.Mul -> [ Mul (result_reg, e1_actual_reg, e2_reg) ]
+      | Ast.Div -> [ Div (result_reg, e1_actual_reg, e2_reg) ]
+      | Ast.Mod -> [ Rem (result_reg, e1_actual_reg, e2_reg) ]
       | Ast.Eq ->
-        [ Sub (result_reg, e1_final_reg, e2_reg); Sltiu (result_reg, result_reg, 1) ]
+        [ Sub (result_reg, e1_actual_reg, e2_reg); Sltiu (result_reg, result_reg, 1) ]
       | Ast.Neq ->
-        [ Sub (result_reg, e1_final_reg, e2_reg); Sltu (result_reg, Zero, result_reg) ]
-      | Ast.Lt -> [ Slt (result_reg, e1_final_reg, e2_reg) ]
+        [ Sub (result_reg, e1_actual_reg, e2_reg); Sltu (result_reg, Zero, result_reg) ]
+      | Ast.Lt -> [ Slt (result_reg, e1_actual_reg, e2_reg) ]
       | Ast.Leq ->
-        [ Slt (result_reg, e2_reg, e1_final_reg); Xori (result_reg, result_reg, 1) ]
-      | Ast.Gt -> [ Slt (result_reg, e2_reg, e1_final_reg) ]
+        [ Slt (result_reg, e2_reg, e1_actual_reg); Xori (result_reg, result_reg, 1) ]
+      | Ast.Gt -> [ Slt (result_reg, e2_reg, e1_actual_reg) ]
       | Ast.Geq ->
-        [ Slt (result_reg, e1_final_reg, e2_reg); Xori (result_reg, result_reg, 1) ]
+        [ Slt (result_reg, e1_actual_reg, e2_reg); Xori (result_reg, result_reg, 1) ]
       | Ast.And | Ast.Or ->
         (* Handled separately in instrs construction *)
         []
@@ -178,7 +202,7 @@ let rec gen_expr ctx (expr : Ast.expr) : reg * instruction list =
         let temp_reg1 = get_temp_reg ctx in
         (* 使用新的临时寄存器避免冲突 *)
         let temp_reg2 = get_temp_reg ctx in
-        let e1_bool_convert = [ Sltu (temp_reg1, Zero, e1_final_reg) ] in
+        let e1_bool_convert = [ Sltu (temp_reg1, Zero, e1_actual_reg) ] in
         let e2_bool_convert = [ Sltu (temp_reg2, Zero, e2_reg) ] in
         let logical_op =
           match op with
