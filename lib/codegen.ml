@@ -450,6 +450,10 @@ let gen_function symbol_table (func_def : Ast.func_def) : asm_item list =
   let temp_frame_size = 1000 in
   (* 临时的大frame_size *)
   let _temp_body_items = gen_stmt ctx temp_frame_size func_def.body in
+  (* 确保S1寄存器被添加到被调用者保存寄存器列表中，但不要重复添加 *)
+  (* 注意：必须在计算frame_size和生成序言指令之前添加S1 *)
+  if not (List.mem S1 ctx.used_callee_saved)
+  then ctx.used_callee_saved <- S1 :: ctx.used_callee_saved;
   (* 现在我们知道了使用的被调用者保存寄存器，计算真正的frame_size *)
   let frame_size = calculate_frame_size func_def ctx.used_callee_saved in
   (* 生成函数序言，包括保存被调用者保存寄存器 *)
@@ -461,9 +465,6 @@ let gen_function symbol_table (func_def : Ast.func_def) : asm_item list =
          Instruction (Sw (reg, offset, Sp)))
       ctx.used_callee_saved
   in
-  (* 确保S1寄存器被添加到被调用者保存寄存器列表中，但不要重复添加 *)
-  if not (List.mem S1 ctx.used_callee_saved)
-  then ctx.used_callee_saved <- S1 :: ctx.used_callee_saved;
   let prologue =
     [ Comment "prologue"
     ; Instruction (Addi (Sp, Sp, -frame_size))
