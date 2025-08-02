@@ -17,6 +17,7 @@ type codegen_context =
   ; mutable continue_labels : string list (* continue 跳转标签栈 *)
   ; mutable local_vars : (string * int) list (* 局部变量映射到栈偏移 *)
   ; mutable used_callee_saved : reg list (* 使用的被调用者保存寄存器 *)
+  ; mutable spill_counter : int (* spill栈位置计数器 *)
   }
 
 (* 创建新的代码生成上下文 *)
@@ -27,6 +28,7 @@ let create_context _symbol_table =
   ; continue_labels = []
   ; local_vars = []
   ; used_callee_saved = []
+  ; spill_counter = 0
   }
 ;;
 
@@ -67,6 +69,24 @@ let get_temp_reg ctx =
           reg)
     in
     find_unused available_s_regs)
+;;
+
+(* 获取一个spill栈位置来保存寄存器内容 *)
+let get_spill_location ctx =
+  ctx.spill_counter <- ctx.spill_counter + 1;
+  (* spill位置在栈的最底部，偏移为负数且比局部变量更远 *)
+  ctx.stack_offset - (ctx.spill_counter * 4)
+;;
+
+(* 生成将寄存器内容spill到栈的指令 *)
+let spill_reg_to_stack ctx reg =
+  let spill_offset = get_spill_location ctx in
+  spill_offset, [ Sw (reg, spill_offset, Fp) ]
+;;
+
+(* 生成从栈恢复寄存器内容的指令 *)
+let restore_reg_from_stack _ctx spill_offset target_reg =
+  [ Lw (target_reg, spill_offset, Fp) ]
 ;;
 
 (* 将变量添加到栈中 *)
@@ -113,42 +133,67 @@ let rec gen_expr ctx (expr : Ast.expr) : reg * instruction list =
     in
     result_reg, instrs
   | Ast.BinaryOp (op, e1, e2) ->
-    (* Check if e2 contains function calls that might overwrite temporary registers *)
+    (* 检查是否需要更小心的寄存器管理 *)
     let e2_has_call = expr_might_use_a0 e2 in
     let e1_reg, e1_instrs = gen_expr ctx e1 in
-    (* For variables that will be used after a function call, we need special handling *)
-    let e1_save_strategy =
-      match e1, e2_has_call with
-      | Ast.Var var_name, true ->
-        (* For variables used after function calls, reload from stack instead of saving to temp reg *)
-        `ReloadFromStack var_name
-      | _, true ->
-        (* For any expression used after function calls, save to a callee-saved register or stack *)
-        let temp_reg = get_temp_reg ctx in
-        `SaveToReg ([ Mv (temp_reg, e1_reg) ], temp_reg)
-      | _, _ when op = Ast.And || op = Ast.Or ->
-        (* For logical operations, always save to avoid conflicts *)
-        let temp_reg = get_temp_reg ctx in
-        `SaveToReg ([ Mv (temp_reg, e1_reg) ], temp_reg)
-      | _ -> `NoSave e1_reg
+    
+    (* 对于复杂的二元表达式，特别是算术运算，我们需要保护e1的值 *)
+    let needs_protection = 
+      e2_has_call || 
+      (match op with 
+       | Ast.Div | Ast.Mod | Ast.Add | Ast.Sub | Ast.Mul -> 
+         (* 检查e2是否是复杂表达式 *)
+         (match e2 with
+          | Ast.BinaryOp _ | Ast.Call _ -> true
+          | _ -> false)
+       | _ -> false)
     in
+    
+    let e1_save_strategy =
+      if needs_protection then
+        match e1 with
+        | Ast.Var var_name ->
+          (* 对于变量，从栈重新加载更安全 *)
+          `ReloadFromStack var_name
+        | _ ->
+          (* 对于表达式结果，保存到栈上 *)
+          let spill_offset, spill_instrs = spill_reg_to_stack ctx e1_reg in
+          `SpillToStack (spill_instrs, spill_offset)
+      else
+        match e1, e2_has_call with
+        | _, true ->
+          let temp_reg = get_temp_reg ctx in
+          `SaveToReg ([ Mv (temp_reg, e1_reg) ], temp_reg)
+        | _, _ when op = Ast.And || op = Ast.Or ->
+          let temp_reg = get_temp_reg ctx in
+          `SaveToReg ([ Mv (temp_reg, e1_reg) ], temp_reg)
+        | _ -> `NoSave e1_reg
+    in
+    
     (* Apply save strategy BEFORE computing e2 *)
     let e1_save_instrs, e1_final_reg =
       match e1_save_strategy with
       | `ReloadFromStack _var_name -> [], e1_reg (* Will reload later *)
       | `SaveToReg (instrs, reg) -> instrs, reg
+      | `SpillToStack (instrs, _offset) -> instrs, e1_reg (* Will reload later *)
       | `NoSave reg -> [], reg
     in
+    
     let e2_reg, e2_instrs = gen_expr ctx e2 in
-    (* Reload variable from stack if needed AFTER e2 computation *)
+    
+    (* Reload e1 value if needed AFTER e2 computation *)
     let e1_reload_instrs, e1_actual_reg =
       match e1_save_strategy with
       | `ReloadFromStack var_name ->
         let offset = get_var_offset ctx var_name in
         let reload_reg = get_temp_reg ctx in
         [ Lw (reload_reg, offset, Fp) ], reload_reg
+      | `SpillToStack (_instrs, spill_offset) ->
+        let reload_reg = get_temp_reg ctx in
+        restore_reg_from_stack ctx spill_offset reload_reg, reload_reg
       | _ -> [], e1_final_reg
     in
+    
     let result_reg = get_temp_reg ctx in
     let op_instrs =
       match op with
