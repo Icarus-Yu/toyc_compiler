@@ -37,59 +37,36 @@ let new_label _ctx prefix =
   label
 ;;
 
-(* 获取临时寄存器，优先使用临时寄存器，必要时使用被调用者保存寄存器 *)
+(* 获取临时寄存器，优先使用T寄存器，必要时合理使用S寄存器 *)
 let get_temp_reg ctx =
-  let reg =
-    match ctx.temp_counter mod 16 with
-    (* 优先使用临时寄存器 T0-T6 *)
-    | 0 -> T0
-    | 1 -> T1
-    | 2 -> T2
-    | 3 -> T3
-    | 4 -> T4
-    | 5 -> T5
-    | 6 -> T6
-    (* 当临时寄存器不够时，使用被调用者保存寄存器 S2-S11 *)
-    | 7 ->
-      if not (List.mem S2 ctx.used_callee_saved)
-      then ctx.used_callee_saved <- S2 :: ctx.used_callee_saved;
-      S2
-    | 8 ->
-      if not (List.mem S3 ctx.used_callee_saved)
-      then ctx.used_callee_saved <- S3 :: ctx.used_callee_saved;
-      S3
-    | 9 ->
-      if not (List.mem S4 ctx.used_callee_saved)
-      then ctx.used_callee_saved <- S4 :: ctx.used_callee_saved;
-      S4
-    | 10 ->
-      if not (List.mem S5 ctx.used_callee_saved)
-      then ctx.used_callee_saved <- S5 :: ctx.used_callee_saved;
-      S5
-    | 11 ->
-      if not (List.mem S6 ctx.used_callee_saved)
-      then ctx.used_callee_saved <- S6 :: ctx.used_callee_saved;
-      S6
-    | 12 ->
-      if not (List.mem S7 ctx.used_callee_saved)
-      then ctx.used_callee_saved <- S7 :: ctx.used_callee_saved;
-      S7
-    | 13 ->
-      if not (List.mem S8 ctx.used_callee_saved)
-      then ctx.used_callee_saved <- S8 :: ctx.used_callee_saved;
-      S8
-    | 14 ->
-      if not (List.mem S9 ctx.used_callee_saved)
-      then ctx.used_callee_saved <- S9 :: ctx.used_callee_saved;
-      S9
-    | 15 ->
-      if not (List.mem S10 ctx.used_callee_saved)
-      then ctx.used_callee_saved <- S10 :: ctx.used_callee_saved;
-      S10
-    | _ -> failwith "Should not happen"
-  in
-  ctx.temp_counter <- ctx.temp_counter + 1;
-  reg
+  let temp_regs = [ T0; T1; T2; T3; T4; T5; T6 ] in
+  let num_temp_regs = List.length temp_regs in
+  (* 首先尝试使用T寄存器 *)
+  if ctx.temp_counter < num_temp_regs * 3
+  then (
+    (* 在前几轮中主要使用T寄存器，允许一定程度的重用 *)
+    let reg = List.nth temp_regs (ctx.temp_counter mod num_temp_regs) in
+    ctx.temp_counter <- ctx.temp_counter + 1;
+    reg)
+  else (
+    (* 当T寄存器不够用时，分配一个新的S寄存器 *)
+    let available_s_regs = [ S2; S3; S4; S5; S6; S7; S8; S9; S10 ] in
+    let rec find_unused regs =
+      match regs with
+      | [] ->
+        (* 如果所有S寄存器都用完了，回退到T寄存器重用 *)
+        let reg = List.nth temp_regs (ctx.temp_counter mod num_temp_regs) in
+        ctx.temp_counter <- ctx.temp_counter + 1;
+        reg
+      | reg :: rest ->
+        if List.mem reg ctx.used_callee_saved
+        then find_unused rest
+        else (
+          ctx.used_callee_saved <- reg :: ctx.used_callee_saved;
+          ctx.temp_counter <- ctx.temp_counter + 1;
+          reg)
+    in
+    find_unused available_s_regs)
 ;;
 
 (* 将变量添加到栈中 *)
