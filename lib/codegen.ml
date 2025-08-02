@@ -136,21 +136,21 @@ let rec gen_expr ctx (expr : Ast.expr) : reg * instruction list =
     (* 检查是否需要更小心的寄存器管理 *)
     let e2_has_call = expr_might_use_a0 e2 in
     let e1_reg, e1_instrs = gen_expr ctx e1 in
-    
     (* 对于复杂的二元表达式，特别是算术运算，我们需要保护e1的值 *)
-    let needs_protection = 
-      e2_has_call || 
-      (match op with 
-       | Ast.Div | Ast.Mod | Ast.Add | Ast.Sub | Ast.Mul -> 
-         (* 检查e2是否是复杂表达式 *)
-         (match e2 with
-          | Ast.BinaryOp _ | Ast.Call _ -> true
-          | _ -> false)
-       | _ -> false)
+    let needs_protection =
+      e2_has_call
+      ||
+      match op with
+      | Ast.Div | Ast.Mod | Ast.Add | Ast.Sub | Ast.Mul ->
+        (* 检查e2是否是复杂表达式 *)
+        (match e2 with
+         | Ast.BinaryOp _ | Ast.Call _ -> true
+         | _ -> false)
+      | _ -> false
     in
-    
     let e1_save_strategy =
-      if needs_protection then
+      if needs_protection
+      then (
         match e1 with
         | Ast.Var var_name ->
           (* 对于变量，从栈重新加载更安全 *)
@@ -158,8 +158,8 @@ let rec gen_expr ctx (expr : Ast.expr) : reg * instruction list =
         | _ ->
           (* 对于表达式结果，保存到栈上 *)
           let spill_offset, spill_instrs = spill_reg_to_stack ctx e1_reg in
-          `SpillToStack (spill_instrs, spill_offset)
-      else
+          `SpillToStack (spill_instrs, spill_offset))
+      else (
         match e1, e2_has_call with
         | _, true ->
           let temp_reg = get_temp_reg ctx in
@@ -167,9 +167,8 @@ let rec gen_expr ctx (expr : Ast.expr) : reg * instruction list =
         | _, _ when op = Ast.And || op = Ast.Or ->
           let temp_reg = get_temp_reg ctx in
           `SaveToReg ([ Mv (temp_reg, e1_reg) ], temp_reg)
-        | _ -> `NoSave e1_reg
+        | _ -> `NoSave e1_reg)
     in
-    
     (* Apply save strategy BEFORE computing e2 *)
     let e1_save_instrs, e1_final_reg =
       match e1_save_strategy with
@@ -178,9 +177,7 @@ let rec gen_expr ctx (expr : Ast.expr) : reg * instruction list =
       | `SpillToStack (instrs, _offset) -> instrs, e1_reg (* Will reload later *)
       | `NoSave reg -> [], reg
     in
-    
     let e2_reg, e2_instrs = gen_expr ctx e2 in
-    
     (* Reload e1 value if needed AFTER e2 computation *)
     let e1_reload_instrs, e1_actual_reg =
       match e1_save_strategy with
@@ -193,7 +190,6 @@ let rec gen_expr ctx (expr : Ast.expr) : reg * instruction list =
         restore_reg_from_stack ctx spill_offset reload_reg, reload_reg
       | _ -> [], e1_final_reg
     in
-    
     let result_reg = get_temp_reg ctx in
     let op_instrs =
       match op with
@@ -427,8 +423,8 @@ let rec gen_stmt ctx frame_size (stmt : Ast.stmt) : asm_item list =
     List.map (fun i -> Instruction i) all_instrs
 ;;
 
-(* 计算函数所需的栈帧大小，包括被调用者保存寄存器 *)
-let calculate_frame_size (func_def : Ast.func_def) used_callee_saved =
+(* 计算函数所需的栈帧大小，包括被调用者保存寄存器和spill空间 *)
+let calculate_frame_size (func_def : Ast.func_def) used_callee_saved ctx =
   (* Helper to count all declarations including nested blocks *)
   let rec count_all_decls_in_stmt stmt =
     match stmt with
@@ -444,13 +440,17 @@ let calculate_frame_size (func_def : Ast.func_def) used_callee_saved =
   let num_locals = count_all_decls_in_stmt func_def.body in
   let num_params = List.length func_def.params in
   let num_callee_saved = List.length used_callee_saved in
+  let num_spills = ctx.spill_counter in
   (* Calculate required space:
      - 8 bytes for ra and fp
      - 4 bytes per callee-saved register
      - 4 bytes per parameter (all parameters need to be stored as local variables)
      - 4 bytes per local variable
+     - 4 bytes per spill slot
   *)
-  let base_space = 8 + (num_callee_saved * 4) + (num_params * 4) + (num_locals * 4) in
+  let base_space =
+    8 + (num_callee_saved * 4) + (num_params * 4) + (num_locals * 4) + (num_spills * 4)
+  in
   (* 16-byte alignment *)
   let aligned_space = (base_space + 15) / 16 * 16 in
   aligned_space
@@ -477,7 +477,7 @@ let gen_function symbol_table (func_def : Ast.func_def) : asm_item list =
   if not (List.mem S1 ctx.used_callee_saved)
   then ctx.used_callee_saved <- S1 :: ctx.used_callee_saved;
   (* 现在我们知道了使用的被调用者保存寄存器，计算真正的frame_size *)
-  let frame_size = calculate_frame_size func_def ctx.used_callee_saved in
+  let frame_size = calculate_frame_size func_def ctx.used_callee_saved ctx in
   (* 生成函数序言，包括保存被调用者保存寄存器 *)
   let save_callee_saved =
     List.mapi
