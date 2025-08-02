@@ -9,7 +9,7 @@ toyc_compiler/
 ├── lib/                     # 核心库模块
 │   ├── ast.ml              # 抽象语法树定义
 │   ├── lexer.mll           # 词法分析器
-│   ├── parser.mly          # 语法分析器  
+│   ├── parser.mly          # 语法分析器
 │   ├── semantic.ml         # 语义分析器
 │   ├── symbol.ml           # 符号表管理
 │   ├── riscv.ml            # RISC-V指令定义
@@ -100,10 +100,10 @@ passed_tests=""
 for tc_file in test_30/*.tc; do
     base_name=$(basename "$tc_file" .tc)
     output_file="test_30/${base_name}_output.s"
-    
+
     echo "测试: $base_name"
     ./_build/default/bin/main.exe < "$tc_file" > "$output_file" 2>/dev/null
-    
+
     if [ $? -eq 0 ]; then
         echo "✅ $base_name 编译成功"
         passed_tests="$passed_tests $base_name"
@@ -123,13 +123,13 @@ else
 fi
 ```
 
-保存为 `test_all.sh`，然后运行：
+保存为 `testall.sh`，然后运行：
 
 ```bash
-chmod +x test_all.sh
+chmod +x testall.sh
 ./test_all.sh
 ```
-
+这里的代码稍有改动，输出到一个新的文件夹。
 #### 3. 验证复杂语法
 
 ```bash
@@ -149,7 +149,7 @@ echo $?  # 0表示成功，非0表示失败
 ./_build/default/bin/main.exe < test_30/05_function_call.tc > output.s
 # 会显示：
 # 语法分析完成，共解析了 2 个函数
-# 语义分析完成  
+# 语义分析完成
 # 代码生成完成
 ```
 
