@@ -218,7 +218,7 @@ let rec gen_expr ctx (expr : Ast.expr) : reg * instruction list =
         (* 对于逻辑运算符，实现正确的计算逻辑，将所有非零值转换为1 *)
         (* 重要：为了避免寄存器分配冲突，我们需要确保中间结果被正确保存 *)
 
-        (* 首先计算e1，并立即将其转换为布尔值并保存 *)
+        (* 首先计算e1，并立即将其转换为布尔值 *)
         let e1_bool_reg = get_temp_reg ctx in
         let e1_bool_instrs = [ Sltu (e1_bool_reg, Zero, e1_actual_reg) ] in
         (* 如果e2的计算可能破坏e1_bool_reg，则需要将其保存到栈上 *)
@@ -258,12 +258,13 @@ let rec gen_expr ctx (expr : Ast.expr) : reg * instruction list =
           | Ast.Or -> [ Or (result_reg, e1_bool_final_reg, e2_bool_reg) ]
           | _ -> failwith "Impossible"
         in
+        (* 正确的指令顺序 *)
         e1_instrs
         @ e1_save_instrs (* Save e1 before e2 computation *)
-        @ e2_instrs
-        @ e1_reload_instrs (* Reload e1 after e2 computation if needed *)
+        @ e1_reload_instrs (* Reload e1 after saving if needed *)
         @ e1_bool_instrs (* Convert e1 to boolean *)
         @ e1_bool_save_instrs (* Save e1 boolean value if needed *)
+        @ e2_instrs (* Compute e2 *)
         @ e2_bool_instrs (* Convert e2 to boolean *)
         @ e1_bool_restore_instrs (* Restore e1 boolean value if needed *)
         @ logical_op
