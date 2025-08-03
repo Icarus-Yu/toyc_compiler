@@ -464,7 +464,7 @@ let calculate_frame_size (func_def : Ast.func_def) used_callee_saved ctx =
     | Block stmts ->
       (* For nested blocks, all variables are live simultaneously *)
       List.fold_left (fun acc s -> acc + count_all_decls_in_stmt s) 0 stmts
-    | If (_, s1, Some s2) -> count_all_decls_in_stmt s1 + count_all_decls_in_stmt s2
+    | If (_, s1, Some s2) -> max (count_all_decls_in_stmt s1) (count_all_decls_in_stmt s2)
     | If (_, s1, None) -> count_all_decls_in_stmt s1
     | While (_, s) -> count_all_decls_in_stmt s
     | _ -> 0
@@ -532,6 +532,8 @@ let gen_function symbol_table (func_def : Ast.func_def) : asm_item list =
   ctx.temp_counter <- 0;
   ctx.stack_offset <- -8 - (List.length ctx.used_callee_saved * 4);
   ctx.local_vars <- [];
+  ctx.spill_counter <- 0;
+  (* 重置spill计数器，避免在real run中使用错误的偏移 *)
   let param_instrs =
     List.mapi
       (fun i param ->
