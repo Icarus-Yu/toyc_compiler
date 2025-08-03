@@ -216,24 +216,56 @@ let rec gen_expr ctx (expr : Ast.expr) : reg * instruction list =
       match op with
       | Ast.And | Ast.Or ->
         (* 对于逻辑运算符，实现正确的计算逻辑，将所有非零值转换为1 *)
-        (* TODO: 在后续版本中实现短路求值 *)
-        let temp_reg1 = get_temp_reg ctx in
-        (* 使用新的临时寄存器避免冲突 *)
-        let temp_reg2 = get_temp_reg ctx in
-        let e1_bool_convert = [ Sltu (temp_reg1, Zero, e1_actual_reg) ] in
-        let e2_bool_convert = [ Sltu (temp_reg2, Zero, e2_reg) ] in
+        (* 重要：为了避免寄存器分配冲突，我们需要确保中间结果被正确保存 *)
+
+        (* 首先计算e1，并立即将其转换为布尔值并保存 *)
+        let e1_bool_reg = get_temp_reg ctx in
+        let e1_bool_instrs = [ Sltu (e1_bool_reg, Zero, e1_actual_reg) ] in
+        (* 如果e2的计算可能破坏e1_bool_reg，则需要将其保存到栈上 *)
+        let e2_might_clobber =
+          match e2 with
+          | Ast.BinaryOp _ | Ast.Call _ -> true
+          | _ -> false
+        in
+        let e1_bool_save_strategy =
+          if e2_might_clobber
+          then (
+            let spill_offset, spill_instrs = spill_reg_to_stack ctx e1_bool_reg in
+            `SpillToStack (spill_instrs, spill_offset))
+          else `NoSave e1_bool_reg
+        in
+        (* 应用e1布尔值保存策略 *)
+        let e1_bool_save_instrs =
+          match e1_bool_save_strategy with
+          | `SpillToStack (instrs, _) -> instrs
+          | `NoSave _ -> []
+        in
+        (* 计算e2并转换为布尔值 *)
+        let e2_bool_reg = get_temp_reg ctx in
+        let e2_bool_instrs = [ Sltu (e2_bool_reg, Zero, e2_reg) ] in
+        (* 如果需要，从栈中恢复e1布尔值 *)
+        let e1_bool_restore_instrs, e1_bool_final_reg =
+          match e1_bool_save_strategy with
+          | `SpillToStack (_, spill_offset) ->
+            let restore_reg = get_temp_reg ctx in
+            restore_reg_from_stack ctx spill_offset restore_reg, restore_reg
+          | `NoSave reg -> [], reg
+        in
+        (* 执行最终的逻辑运算 *)
         let logical_op =
           match op with
-          | Ast.And -> [ And (result_reg, temp_reg1, temp_reg2) ]
-          | Ast.Or -> [ Or (result_reg, temp_reg1, temp_reg2) ]
+          | Ast.And -> [ And (result_reg, e1_bool_final_reg, e2_bool_reg) ]
+          | Ast.Or -> [ Or (result_reg, e1_bool_final_reg, e2_bool_reg) ]
           | _ -> failwith "Impossible"
         in
         e1_instrs
         @ e1_save_instrs (* Save e1 before e2 computation *)
         @ e2_instrs
         @ e1_reload_instrs (* Reload e1 after e2 computation if needed *)
-        @ e1_bool_convert
-        @ e2_bool_convert
+        @ e1_bool_instrs (* Convert e1 to boolean *)
+        @ e1_bool_save_instrs (* Save e1 boolean value if needed *)
+        @ e2_bool_instrs (* Convert e2 to boolean *)
+        @ e1_bool_restore_instrs (* Restore e1 boolean value if needed *)
         @ logical_op
       | _ ->
         e1_instrs
