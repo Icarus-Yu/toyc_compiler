@@ -113,6 +113,39 @@ let rec expr_might_use_a0 = function
 (* Generate expression code with proper A0 handling *)
 let rec gen_expr ctx (expr : Ast.expr) : reg * instruction list =
   match expr with
+  | Ast.BinaryOp (op, Ast.Int n1, Ast.Int n2) ->
+    let result_val =
+      match op with
+      | Ast.Add -> n1 + n2
+      | Ast.Sub -> n1 - n2
+      | Ast.Mul -> n1 * n2
+      (* 语义分析阶段已经检查过除零，但这里依然可以做保护性处理 *)
+      | Ast.Div -> if n2 <> 0 then n1 / n2 else 0
+      | Ast.Mod -> if n2 <> 0 then n1 mod n2 else 0
+      | Ast.Eq  -> if n1 = n2 then 1 else 0
+      | Ast.Neq -> if n1 <> n2 then 1 else 0
+      | Ast.Lt  -> if n1 < n2 then 1 else 0
+      | Ast.Leq -> if n1 <= n2 then 1 else 0
+      | Ast.Gt  -> if n1 > n2 then 1 else 0
+      | Ast.Geq -> if n1 >= n2 then 1 else 0
+      | Ast.And -> if (n1 <> 0) && (n2 <> 0) then 1 else 0
+      | Ast.Or  -> if (n1 <> 0) || (n2 <> 0) then 1 else 0
+    in
+    let reg = get_temp_reg ctx in
+    let instr = [ Li (reg, result_val) ] in
+    reg, instr
+
+  (* 优化点2: 处理操作数是常量的一元运算 *)
+  | Ast.UnaryOp (op, Ast.Int n) ->
+    let result_val =
+      match op with
+      | Ast.Pos -> n
+      | Ast.Neg -> -n
+      | Ast.Not -> if n = 0 then 1 else 0
+    in
+    let reg = get_temp_reg ctx in
+    let instr = [ Li (reg, result_val) ] in
+    reg, instr
   | Ast.Int n ->
     let reg = get_temp_reg ctx in
     let instr = [ Li (reg, n) ] in

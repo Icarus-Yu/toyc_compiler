@@ -29,8 +29,7 @@
 %token LPAREN RPAREN LBRACE RBRACE
 %token SEMI COMMA ASSIGN
 
-/* 3. 定义优先级和结合性 (为未来的语法分析做准备) */
-%right ASSIGN
+/* 3. 定义优先级和结合性 (这些声明现在将真正起作用) */
 %left OR
 %left AND
 %left EQ NEQ
@@ -49,7 +48,7 @@
 
 %%
 
-/* 5. 语法规则 (现在可以留空，下一步再填充) */
+/* 5. 语法规则 */
 
 /*
   program: 编译单元，入口符号，对应一个或多个函数定义
@@ -119,17 +118,6 @@ stmts:
 
 /*
   stmt: ToyC 所有语句类型
-  包含：
-    - block
-    - 空语句
-    - 表达式语句
-    - 变量赋值
-    - 变量声明
-    - if/else
-    - while
-    - break/continue
-    - return ;
-    - return Expr ;
 */
 stmt:
   block                { $1 }
@@ -150,54 +138,45 @@ expr_opt:
 |      { None }
 ;
 
+/**********************************************************************
+ * START: 这里是唯一的修改部分
+ **********************************************************************/
+
 /*
-  表达式递归下降，优先级从低到高
+  统一的、递归的表达式规则。
+  优先级和结合性由文件顶部的 %left, %right 等声明来处理。
 */
 expr:
-  expr OR expr1   { BinaryOp (Or, $1, $3) }
-| expr1           { $1 }
+  /* 二元运算 */
+  expr PLUS expr       { BinaryOp (Add, $1, $3) }
+| expr MINUS expr      { BinaryOp (Sub, $1, $3) }
+| expr STAR expr       { BinaryOp (Mul, $1, $3) }
+| expr SLASH expr      { BinaryOp (Div, $1, $3) }
+| expr MOD expr        { BinaryOp (Mod, $1, $3) }
+| expr EQ expr         { BinaryOp (Eq, $1, $3) }
+| expr NEQ expr        { BinaryOp (Neq, $1, $3) }
+| expr LT expr         { BinaryOp (Lt, $1, $3) }
+| expr LEQ expr        { BinaryOp (Leq, $1, $3) }
+| expr GT expr         { BinaryOp (Gt, $1, $3) }
+| expr GEQ expr        { BinaryOp (Geq, $1, $3) }
+| expr AND expr        { BinaryOp (And, $1, $3) }
+| expr OR expr         { BinaryOp (Or, $1, $3) }
+| /* 一元运算 (使用 %prec 解决与二元减号的冲突) */
+  MINUS expr %prec UMINUS { UnaryOp (Neg, $2) }
+| PLUS expr %prec UPLUS   { UnaryOp (Pos, $2) }
+| NOT expr                { UnaryOp (Not, $2) }
+| /* 基本表达式 */
+  primary                 { $1 }
 ;
 
-expr1:
-  expr1 AND expr2 { BinaryOp (And, $1, $3) }
-| expr2           { $1 }
-;
-
-expr2:
-  expr2 EQ expr3  { BinaryOp (Eq, $1, $3) }
-| expr2 NEQ expr3 { BinaryOp (Neq, $1, $3) }
-| expr2 LT expr3  { BinaryOp (Lt, $1, $3) }
-| expr2 LEQ expr3 { BinaryOp (Leq, $1, $3) }
-| expr2 GT expr3  { BinaryOp (Gt, $1, $3) }
-| expr2 GEQ expr3 { BinaryOp (Geq, $1, $3) }
-| expr3           { $1 }
-;
-
-expr3:
-  expr3 PLUS expr4  { BinaryOp (Add, $1, $3) }
-| expr3 MINUS expr4 { BinaryOp (Sub, $1, $3) }
-| expr4             { $1 }
-;
-
-expr4:
-  expr4 STAR expr5  { BinaryOp (Mul, $1, $3) }
-| expr4 SLASH expr5 { BinaryOp (Div, $1, $3) }
-| expr4 MOD expr5   { BinaryOp (Mod, $1, $3) }
-| expr5             { $1 }
-;
-
-expr5:
-  PLUS expr5 %prec UPLUS  { UnaryOp (Pos, $2) }
-| MINUS expr5 %prec UMINUS { UnaryOp (Neg, $2) }
-| NOT expr5   { UnaryOp (Not, $2) }
-| primary     { $1 }
-;
-
+/*
+  primary: 包含所有最高优先级的表达式单元
+*/
 primary:
-  ID LPAREN args_opt RPAREN { Call ($1, $3) }
-| ID                        { Var $1 }
+  ID                        { Var $1 }
 | NUMBER                    { Int $1 }
 | LPAREN expr RPAREN        { $2 }
+| ID LPAREN args_opt RPAREN { Call ($1, $3) }
 ;
 
 args_opt:
@@ -208,4 +187,7 @@ args_opt:
 args:
   expr                { [$1] }
 | args COMMA expr     { $1 @ [$3] }
-
+;
+/**********************************************************************
+ * END: 修改部分结束
+ **********************************************************************/
