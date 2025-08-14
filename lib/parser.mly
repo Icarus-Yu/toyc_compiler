@@ -37,7 +37,11 @@
 %left LT LEQ GT GEQ
 %left PLUS MINUS
 %left STAR SLASH MOD
-%right NOT
+%right NOT UMINUS UPLUS
+
+/* 解决悬空else问题：ELSE与最近的IF匹配 */
+%nonassoc LOWER_THAN_ELSE
+%nonassoc ELSE
 
 
 /* 4. 定义开始符号 (未来语法分析的入口) */
@@ -134,7 +138,7 @@ stmt:
 | id=ID ASSIGN e=expr SEMI { Assign (id, e) }
 | INT id=ID ASSIGN e=expr SEMI { Declare (id, e) }
 | IF LPAREN cond=expr RPAREN s1=stmt ELSE s2=stmt { If (cond, s1, Some s2) }
-| IF LPAREN cond=expr RPAREN s1=stmt              { If (cond, s1, None) }
+| IF LPAREN cond=expr RPAREN s1=stmt %prec LOWER_THAN_ELSE { If (cond, s1, None) }
 | WHILE LPAREN cond=expr RPAREN body=stmt         { While (cond, body) }
 | BREAK SEMI                                      { Break }
 | CONTINUE SEMI                                   { Continue }
@@ -183,7 +187,8 @@ expr4:
 ;
 
 expr5:
-  MINUS expr5 { UnaryOp (Neg, $2) }
+  PLUS expr5 %prec UPLUS  { UnaryOp (Pos, $2) }
+| MINUS expr5 %prec UMINUS { UnaryOp (Neg, $2) }
 | NOT expr5   { UnaryOp (Not, $2) }
 | primary     { $1 }
 ;

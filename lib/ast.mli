@@ -19,6 +19,7 @@ type binop =
 
 (* 一元运算符 *)
 type unop =
+  | Pos (* + *)
   | Neg (* - *)
   | Not (* ! *)
 
